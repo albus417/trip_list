@@ -17,7 +17,38 @@ from modules.utils import new_id, yen, safe_filename, sort_key_date_time, today_
 from modules.weather import get_weather_for
 
 st.set_page_config(page_title="TripList", page_icon="🌷", layout="wide")
+st.markdown("""
+<style>
 
+/* アプリ全体 */
+.stApp{
+    background: #FFF8F1;
+}
+
+/* サイドバー */
+section[data-testid="stSidebar"]{
+    background: #F4E8DA;
+}
+
+/* ボタン */
+.stButton>button{
+    background:#C8A97E;
+    color:white;
+    border-radius:12px;
+    border:none;
+}
+
+.stButton>button:hover{
+    background:#B68C63;
+}
+
+/* テキスト入力 */
+.stTextInput input{
+    border-radius:10px;
+}
+
+</style>
+""", unsafe_allow_html=True)
 CSS = """
 <style>
 .stApp { background: linear-gradient(135deg, #fff7f0 0%, #f7fbff 100%); }
