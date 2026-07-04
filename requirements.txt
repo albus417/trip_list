@@ -1,5 +1,5 @@
 streamlit
-reportlab
-pandas
-requests
 supabase
+requests
+pandas
+reportlab
