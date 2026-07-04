@@ -77,18 +77,51 @@ DEFAULT_SETTINGS = {
 
 
 # =========================
-# Supabase / ログイン
+# Supabase / 認証
 # =========================
 
 @st.cache_resource
 def get_supabase_client():
     """Streamlit Secrets から Supabase クライアントを作る。"""
-    url = st.secrets.get("SUPABASE_URL", "")
-    key = st.secrets.get("SUPABASE_ANON_KEY", "")
+    try:
+        url = st.secrets.get("SUPABASE_URL", "")
+        key = st.secrets.get("SUPABASE_ANON_KEY", "")
+    except Exception:
+        st.error("Supabase の Secrets が見つかりません。`.streamlit/secrets.toml` または Streamlit Cloud の Secrets を設定してください。")
+        st.stop()
+
     if not url or not key:
         st.error("Supabase の Secrets が未設定です。SUPABASE_URL と SUPABASE_ANON_KEY を設定してください。")
         st.stop()
+
     return create_client(url, key)
+
+
+def normalize_email(email: str) -> str:
+    """メールアドレスの前後・中の空白や全角スペースを取り除き、小文字にそろえる。"""
+    return (email or "").replace("　", "").replace(" ", "").strip().lower()
+
+
+def is_valid_email(email: str) -> bool:
+    return bool(re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email or ""))
+
+
+def password_message(password: str) -> str:
+    if len(password or "") < 8:
+        return "パスワードは8文字以上にしてください。"
+    return ""
+
+
+def clear_local_auth_state():
+    for key in [
+        "access_token",
+        "refresh_token",
+        "user",
+        "trips",
+        "settings",
+        "selected_trip_index",
+    ]:
+        st.session_state.pop(key, None)
 
 
 def restore_auth_session():
@@ -96,13 +129,12 @@ def restore_auth_session():
     sb = get_supabase_client()
     access_token = st.session_state.get("access_token")
     refresh_token = st.session_state.get("refresh_token")
+
     if access_token and refresh_token:
         try:
             sb.auth.set_session(access_token, refresh_token)
         except Exception:
-            st.session_state.pop("access_token", None)
-            st.session_state.pop("refresh_token", None)
-            st.session_state.pop("user", None)
+            clear_local_auth_state()
     return sb
 
 
@@ -110,6 +142,7 @@ def current_user():
     user = st.session_state.get("user")
     if user:
         return user
+
     try:
         response = get_supabase_client().auth.get_user()
         user = getattr(response, "user", None)
@@ -121,11 +154,16 @@ def current_user():
 
 
 def save_auth_session(session, user):
+    """Supabase の session を Streamlit の session_state に保存する。"""
+    if not session or not user:
+        return False
+
     st.session_state["access_token"] = session.access_token
     st.session_state["refresh_token"] = session.refresh_token
     st.session_state["user"] = user
     st.session_state.pop("trips", None)
     st.session_state.pop("settings", None)
+    return True
 
 
 def logout():
@@ -133,9 +171,149 @@ def logout():
         get_supabase_client().auth.sign_out()
     except Exception:
         pass
-    for key in ["access_token", "refresh_token", "user", "trips", "settings", "selected_trip_index"]:
-        st.session_state.pop(key, None)
+    clear_local_auth_state()
     st.rerun()
+
+
+def auth_error_message(error: Exception) -> str:
+    message = str(error)
+    lower = message.lower()
+
+    if "rate limit" in lower or "email rate limit" in lower:
+        return "メール送信制限に達しています。しばらく待つか、Supabase の Email confirmation をOFFにしてから再試行してください。"
+    if "invalid login" in lower or "invalid credentials" in lower:
+        return "メールアドレスまたはパスワードが違います。"
+    if "email" in lower and "invalid" in lower:
+        return "メールアドレスの形式が正しくありません。空白が入っていないか確認してください。"
+    if "password" in lower and ("weak" in lower or "short" in lower):
+        return "パスワードが短すぎます。8文字以上にしてください。"
+    if "already registered" in lower or "user already registered" in lower:
+        return "このメールアドレスはすでに登録されています。ログインを試してください。"
+    if "email not confirmed" in lower:
+        return "メール確認がまだ完了していません。確認メールを開いてからログインしてください。"
+
+    return message
+
+
+def show_auth_error(prefix: str, error: Exception):
+    st.error(f"{prefix}：{auth_error_message(error)}")
+
+
+def render_public_auth_header():
+    st.markdown(
+        """
+        <div style="text-align:center; padding: 2rem 0 1rem 0;">
+            <h1 style="font-size: 2.4rem; margin-bottom: 0.2rem;">🌷 TripList 🌿</h1>
+            <p style="color:#8a6f60; font-size:1.05rem;">
+                旅行計画・持ち物・写真・費用を、ログインして自分専用に保存できます。
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_login_tab(sb):
+    with st.form("login_form", clear_on_submit=False):
+        email = st.text_input("メールアドレス", key="login_email")
+        password = st.text_input("パスワード", type="password", key="login_password")
+        submitted = st.form_submit_button("ログイン")
+
+    if not submitted:
+        return
+
+    clean_email = normalize_email(email)
+    if not is_valid_email(clean_email):
+        st.error("メールアドレスの形式を確認してください。")
+        return
+    if not password:
+        st.error("パスワードを入力してください。")
+        return
+
+    try:
+        result = sb.auth.sign_in_with_password(
+            {"email": clean_email, "password": password}
+        )
+        if save_auth_session(result.session, result.user):
+            ensure_user_data()
+            st.success("ログインしました。")
+            st.rerun()
+        else:
+            st.warning("ログイン結果を保存できませんでした。もう一度試してください。")
+    except Exception as e:
+        show_auth_error("ログインできませんでした", e)
+
+
+def render_signup_tab(sb):
+    with st.form("signup_form", clear_on_submit=False):
+        email = st.text_input("メールアドレス", key="signup_email")
+        password = st.text_input("パスワード（8文字以上）", type="password", key="signup_password")
+        password2 = st.text_input("パスワード確認", type="password", key="signup_password2")
+        agree = st.checkbox("自分の旅行データをクラウドに保存することに同意します", key="signup_agree")
+        submitted = st.form_submit_button("アカウントを作成")
+
+    if not submitted:
+        return
+
+    clean_email = normalize_email(email)
+    if not is_valid_email(clean_email):
+        st.error("メールアドレスの形式を確認してください。")
+        return
+    msg = password_message(password)
+    if msg:
+        st.error(msg)
+        return
+    if password != password2:
+        st.error("確認用パスワードが一致していません。")
+        return
+    if not agree:
+        st.error("クラウド保存への同意にチェックしてください。")
+        return
+
+    try:
+        result = sb.auth.sign_up({"email": clean_email, "password": password})
+
+        # Supabase側でメール確認OFFなら session が返り、そのままログインできる。
+        # メール確認ONなら session は None になり、確認メール後にログインする流れになる。
+        if getattr(result, "session", None):
+            if save_auth_session(result.session, result.user):
+                ensure_user_data()
+                st.success("アカウントを作成してログインしました。")
+                st.rerun()
+        else:
+            st.success("アカウントを作成しました。確認メールが届いている場合は、メール認証後にログインしてください。")
+            st.info("開発中は Supabase の Authentication → Providers → Email で Email confirmation をOFFにすると、すぐログインできます。")
+    except Exception as e:
+        show_auth_error("登録できませんでした", e)
+
+
+def render_reset_password_tab(sb):
+    st.caption("パスワードを忘れた場合、再設定メールを送ります。")
+    with st.form("reset_password_form", clear_on_submit=False):
+        email = st.text_input("登録メールアドレス", key="reset_email")
+        submitted = st.form_submit_button("再設定メールを送る")
+
+    if not submitted:
+        return
+
+    clean_email = normalize_email(email)
+    if not is_valid_email(clean_email):
+        st.error("メールアドレスの形式を確認してください。")
+        return
+
+    try:
+        # supabase-py v2
+        if hasattr(sb.auth, "reset_password_for_email"):
+            sb.auth.reset_password_for_email(clean_email)
+        # 環境によっては旧名
+        elif hasattr(sb.auth, "reset_password_email"):
+            sb.auth.reset_password_email(clean_email)
+        else:
+            st.warning("現在の supabase ライブラリではパスワード再設定メソッドが見つかりません。")
+            return
+        st.success("再設定メールを送信しました。メールを確認してください。")
+    except Exception as e:
+        show_auth_error("再設定メールを送信できませんでした", e)
 
 
 def render_auth_gate():
@@ -144,46 +322,24 @@ def render_auth_gate():
     if current_user():
         return True
 
-    st.markdown("""
-    <h1>🌷 TripList 🌿</h1>
-    <p style="text-align:center; color:#8a6f60;">
-    ログインすると、自分だけの旅行データを保存できます。
-    </p>
-    """, unsafe_allow_html=True)
+    render_public_auth_header()
 
-    tab_login, tab_signup = st.tabs(["ログイン", "新規登録"])
+    with st.expander("このアプリのデータ保存について", expanded=False):
+        st.write("ログインしたユーザーごとに旅行データを分けて Supabase に保存します。")
+        st.write("他のユーザーは、あなたの旅行データを見ることはできません。")
+        st.caption("メールアドレスとパスワードは Supabase Auth が管理します。アプリ側にはパスワードを保存しません。")
+
     sb = get_supabase_client()
+    tab_login, tab_signup, tab_reset = st.tabs(["ログイン", "新規登録", "パスワード再設定"])
 
     with tab_login:
-        with st.form("login_form"):
-            email = st.text_input("メールアドレス", key="login_email")
-            password = st.text_input("パスワード", type="password", key="login_password")
-            submitted = st.form_submit_button("ログイン")
-        if submitted:
-            try:
-                result = sb.auth.sign_in_with_password({"email": email, "password": password})
-                save_auth_session(result.session, result.user)
-                st.rerun()
-            except Exception as e:
-                st.error(f"ログインできませんでした：{e}")
+        render_login_tab(sb)
 
     with tab_signup:
-        with st.form("signup_form"):
-            email = st.text_input("メールアドレス", key="signup_email")
-            password = st.text_input("パスワード", type="password", key="signup_password")
-            submitted = st.form_submit_button("新規登録")
-        if submitted:
-            try:
-                result = sb.auth.sign_up({"email": email, "password": password})
-                # メール確認OFFならそのままログインできる。ONなら確認メールが必要。
-                if getattr(result, "session", None):
-                    save_auth_session(result.session, result.user)
-                    ensure_user_data()
-                    st.rerun()
-                else:
-                    st.success("登録しました。確認メールが届いている場合は、メール認証後にログインしてください。")
-            except Exception as e:
-                st.error(f"登録できませんでした：{e}")
+        render_signup_tab(sb)
+
+    with tab_reset:
+        render_reset_password_tab(sb)
 
     return False
 
