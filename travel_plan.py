@@ -19,34 +19,43 @@ from modules.weather import get_weather_for
 st.set_page_config(page_title="TripList", page_icon="🌷", layout="wide")
 st.markdown("""
 <style>
-
-/* アプリ全体 */
-.stApp{
+.stApp {
     background: #FFF8F1;
+    color: #2F2F36;
+}
+
+/* 全体の文字色を固定 */
+html, body, [class*="css"], .stMarkdown, .stText, p, span, div, label {
+    color: #2F2F36 !important;
+}
+
+/* 入力欄 */
+input, textarea {
+    color: #2F2F36 !important;
+    background-color: #FFFFFF !important;
+}
+
+/* selectboxなど */
+[data-baseweb="select"] * {
+    color: #2F2F36 !important;
 }
 
 /* サイドバー */
-section[data-testid="stSidebar"]{
+section[data-testid="stSidebar"] {
     background: #F4E8DA;
 }
 
+section[data-testid="stSidebar"] * {
+    color: #2F2F36 !important;
+}
+
 /* ボタン */
-.stButton>button{
-    background:#C8A97E;
-    color:white;
-    border-radius:12px;
-    border:none;
+.stButton > button {
+    background: #C8A97E;
+    color: white !important;
+    border-radius: 12px;
+    border: none;
 }
-
-.stButton>button:hover{
-    background:#B68C63;
-}
-
-/* テキスト入力 */
-.stTextInput input{
-    border-radius:10px;
-}
-
 </style>
 """, unsafe_allow_html=True)
 CSS = """
