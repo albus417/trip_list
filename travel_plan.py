@@ -1942,7 +1942,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-]
 
 WEATHER_CODES = {
     0: "快晴 ☀️",
