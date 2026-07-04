@@ -72,18 +72,22 @@ def load_trips():
 
 
 def save_trips(trips):
+    """旅行データを軽量なJSONで保存する。indentを付けないので trips.json が巨大化しにくい。"""
     DATA_FILE.write_text(
-        json.dumps(trips, ensure_ascii=False, indent=2),
+        json.dumps(trips, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8",
     )
 
 
 def load_settings():
     default_settings = {
+        "app_name": "TripList",
         "person1_name": "",
         "person2_name": "",
-        "anniversary_name": "付き合った記念日",
+        "participants": [],
+        "anniversary_name": "記念日",
         "anniversary_date": "",
+        "use_anniversary": True,
     }
     if SETTINGS_FILE.exists():
         try:
@@ -91,14 +95,67 @@ def load_settings():
             default_settings.update(saved)
         except Exception:
             pass
-    return default_settings
+    return normalize_settings(default_settings)
 
 
 def save_settings(settings):
+    settings = normalize_settings(settings)
     SETTINGS_FILE.write_text(
-        json.dumps(settings, ensure_ascii=False, indent=2),
+        json.dumps(settings, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8",
     )
+
+
+def get_participants(settings):
+    """参加者リストを取得する。古い person1_name / person2_name 形式も自動で移行する。"""
+    participants = settings.get("participants", [])
+    if not isinstance(participants, list):
+        participants = []
+
+    cleaned = [str(name).strip() for name in participants if str(name).strip()]
+
+    # 旧バージョン用：person1_name / person2_name しかない場合も読み込む
+    if not cleaned:
+        for key in ["person1_name", "person2_name"]:
+            name = str(settings.get(key, "")).strip()
+            if name:
+                cleaned.append(name)
+
+    return cleaned
+
+
+def set_participants(settings, participants):
+    cleaned = [str(name).strip() for name in participants if str(name).strip()]
+    settings["participants"] = cleaned
+
+    # 古いコードや古いJSONとの互換性のために残しておく
+    settings["person1_name"] = cleaned[0] if len(cleaned) >= 1 else ""
+    settings["person2_name"] = cleaned[1] if len(cleaned) >= 2 else ""
+    return settings
+
+
+def normalize_settings(settings):
+    set_participants(settings, get_participants(settings))
+    return settings
+
+
+def file_size_text(path):
+    if not path.exists():
+        return "0 B"
+    size = path.stat().st_size
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def compact_data_files():
+    """既存の trips.json / app_settings.json を軽量形式で保存し直す。"""
+    trips = load_trips()
+    save_trips(trips)
+    settings = load_settings()
+    save_settings(settings)
 
 
 def parse_date_text(value, default=None):
@@ -109,19 +166,25 @@ def parse_date_text(value, default=None):
 
 
 def app_title(settings):
-    name1 = settings.get("person1_name", "").strip()
-    name2 = settings.get("person2_name", "").strip()
-    if name1 and name2:
-        return f"{name1}，{name2}旅行計画"
-    return "ふたりの旅行計画"
+    app_name = settings.get("app_name", "TripList").strip() or "TripList"
+    participants = get_participants(settings)
+
+    if len(participants) == 1:
+        return f"{participants[0]}の旅行計画"
+    if len(participants) == 2:
+        return f"{participants[0]}・{participants[1]}の旅行計画"
+    if len(participants) >= 3:
+        return f"{participants[0]}・{participants[1]}ほか{len(participants) - 2}人の旅行計画"
+    return app_name
 
 
 def settings_is_complete(settings):
-    return bool(
-        settings.get("person1_name", "").strip()
-        and settings.get("person2_name", "").strip()
-        and settings.get("anniversary_date", "").strip()
-    )
+    participants_ok = len(get_participants(settings)) >= 1
+    if not participants_ok:
+        return False
+    if not settings.get("use_anniversary", True):
+        return True
+    return bool(settings.get("anniversary_date", "").strip())
 
 
 def next_yearly_anniversary(base_date, today):
@@ -276,7 +339,7 @@ def geocode_place(place):
 
 
 @st.cache_data(ttl=60 * 60)
-def fetch_daily_weather(latitude, longitude):
+def fetch_daily_forecast(latitude, longitude):
     """今日から16日分の天気予報を取得する。"""
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
@@ -295,8 +358,51 @@ def fetch_daily_weather(latitude, longitude):
         return {}
 
 
+@st.cache_data(ttl=60 * 60 * 24)
+def fetch_daily_archive(latitude, longitude, start_date, end_date):
+    """過去の天気実績を取得する。"""
+    url = "https://archive-api.open-meteo.com/v1/archive"
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "start_date": start_date,
+        "end_date": end_date,
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum",
+        "timezone": "Asia/Tokyo",
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        return response.json().get("daily", {})
+    except Exception:
+        return {}
+
+
+def most_common(values):
+    counts = defaultdict(int)
+    for value in values:
+        if value is not None:
+            counts[value] += 1
+    if not counts:
+        return None
+    return max(counts, key=counts.get)
+
+
+def safe_avg(values):
+    nums = [v for v in values if isinstance(v, (int, float))]
+    if not nums:
+        return None
+    return round(sum(nums) / len(nums), 1)
+
+
 def weather_for(place, date_text):
-    """場所と日付から、その日の予報を1件返す。"""
+    """場所と日付から天気を返す。
+
+    - 今日から16日以内: 予報
+    - 過去: 実績
+    - 16日より先: 過去5年の同日の参考値
+    """
     if not place or not date_text:
         return None
 
@@ -305,13 +411,6 @@ def weather_for(place, date_text):
     except Exception:
         return None
 
-    today = date.today()
-    if target_date < today or target_date > today + timedelta(days=15):
-        return {
-            "status": "out_of_range",
-            "message": "天気予報は今日から16日以内だけ表示できます。",
-        }
-
     geo = geocode_place(place)
     if not geo:
         return {
@@ -319,24 +418,110 @@ def weather_for(place, date_text):
             "message": "場所が見つかりませんでした。",
         }
 
-    daily = fetch_daily_weather(geo["latitude"], geo["longitude"])
-    dates = daily.get("time", [])
-    if date_text not in dates:
+    today = date.today()
+
+    # 1. 近い未来は予報を表示
+    if today <= target_date <= today + timedelta(days=15):
+        daily = fetch_daily_forecast(geo["latitude"], geo["longitude"])
+        dates = daily.get("time", [])
+        if date_text not in dates:
+            return {
+                "status": "not_found",
+                "message": "その日の天気予報が見つかりませんでした。",
+            }
+
+        idx = dates.index(date_text)
+        code = daily.get("weather_code", [None])[idx]
         return {
-            "status": "not_found",
-            "message": "その日の天気予報が見つかりませんでした。",
+            "status": "ok",
+            "kind": "予報",
+            "place_name": geo.get("name", place),
+            "admin1": geo.get("admin1", ""),
+            "weather": WEATHER_CODES.get(code, f"天気コード {code}"),
+            "temp_max": daily.get("temperature_2m_max", [None])[idx],
+            "temp_min": daily.get("temperature_2m_min", [None])[idx],
+            "rain_prob": daily.get("precipitation_probability_max", [None])[idx],
+            "precipitation": None,
         }
 
-    idx = dates.index(date_text)
-    code = daily.get("weather_code", [None])[idx]
+    # 2. 過去は実績を表示
+    if target_date < today:
+        daily = fetch_daily_archive(
+            geo["latitude"],
+            geo["longitude"],
+            date_text,
+            date_text,
+        )
+        dates = daily.get("time", [])
+        if date_text not in dates:
+            return {
+                "status": "not_found",
+                "message": "過去の天気実績が見つかりませんでした。",
+            }
+
+        idx = dates.index(date_text)
+        code = daily.get("weather_code", [None])[idx]
+        return {
+            "status": "ok",
+            "kind": "過去の実績",
+            "place_name": geo.get("name", place),
+            "admin1": geo.get("admin1", ""),
+            "weather": WEATHER_CODES.get(code, f"天気コード {code}"),
+            "temp_max": daily.get("temperature_2m_max", [None])[idx],
+            "temp_min": daily.get("temperature_2m_min", [None])[idx],
+            "rain_prob": None,
+            "precipitation": daily.get("precipitation_sum", [None])[idx],
+        }
+
+    # 3. 遠い未来は過去5年の同日の参考値を表示
+    sample_dates = []
+    for year in range(today.year - 5, today.year):
+        try:
+            sample_dates.append(date(year, target_date.month, target_date.day))
+        except ValueError:
+            # 2/29などは存在しない年がある
+            pass
+
+    if not sample_dates:
+        return {
+            "status": "not_found",
+            "message": "参考天気を作るための過去データがありませんでした。",
+        }
+
+    codes = []
+    max_temps = []
+    min_temps = []
+    precipitations = []
+
+    for sample_date in sample_dates:
+        d = sample_date.isoformat()
+        daily = fetch_daily_archive(geo["latitude"], geo["longitude"], d, d)
+        dates = daily.get("time", [])
+        if d not in dates:
+            continue
+        idx = dates.index(d)
+        codes.append(daily.get("weather_code", [None])[idx])
+        max_temps.append(daily.get("temperature_2m_max", [None])[idx])
+        min_temps.append(daily.get("temperature_2m_min", [None])[idx])
+        precipitations.append(daily.get("precipitation_sum", [None])[idx])
+
+    if not max_temps and not min_temps:
+        return {
+            "status": "not_found",
+            "message": "参考天気を作るための過去データが見つかりませんでした。",
+        }
+
+    code = most_common(codes)
     return {
         "status": "ok",
+        "kind": "過去5年の同日参考",
         "place_name": geo.get("name", place),
         "admin1": geo.get("admin1", ""),
         "weather": WEATHER_CODES.get(code, f"天気コード {code}"),
-        "temp_max": daily.get("temperature_2m_max", [None])[idx],
-        "temp_min": daily.get("temperature_2m_min", [None])[idx],
-        "rain_prob": daily.get("precipitation_probability_max", [None])[idx],
+        "temp_max": safe_avg(max_temps),
+        "temp_min": safe_avg(min_temps),
+        "rain_prob": None,
+        "precipitation": safe_avg(precipitations),
     }
 
 
@@ -348,10 +533,19 @@ def format_weather_text(weather):
     place = weather.get("place_name", "")
     area = weather.get("admin1", "")
     location = f"{area} {place}".strip()
+    kind = weather.get("kind", "天気")
+
+    if weather.get("rain_prob") is not None:
+        rain_text = f"降水確率{weather.get('rain_prob')}%"
+    elif weather.get("precipitation") is not None:
+        rain_text = f"降水量{weather.get('precipitation')}mm"
+    else:
+        rain_text = "降水情報なし"
+
     return (
-        f"{location}：{weather.get('weather', '')} / "
+        f"{location}：{kind} / {weather.get('weather', '')} / "
         f"最高{weather.get('temp_max')}℃・最低{weather.get('temp_min')}℃ / "
-        f"降水確率{weather.get('rain_prob')}%"
+        f"{rain_text}"
     )
 
 # =========================
@@ -516,7 +710,7 @@ def show_header(settings):
     st.markdown(f"""
     <h1>🌷 {title} 🌿</h1>
     <p style="text-align:center; color:#8a6f60;">
-    ふたりの予定とお金を、やさしくまとめる旅のしおり
+    旅行の予定・持ち物・写真・費用をまとめる旅のしおり
     </p>
     """, unsafe_allow_html=True)
 
@@ -526,49 +720,80 @@ def render_initial_setup(settings):
         return True
 
     st.markdown("""
-    <h1>🌷 旅行計画アプリ 初期設定 🌿</h1>
+    <h1>🌷 TripList 初期設定 🌿</h1>
     <p style="text-align:center; color:#8a6f60;">
-    最初に2人の名前と記念日を登録してください。
+    最初にアプリ名・参加者・記念日を登録してください。
     </p>
     """, unsafe_allow_html=True)
 
+    current_participants = get_participants(settings)
+    default_count = max(2, len(current_participants) or 2)
+
     with st.form("initial_setup_form"):
-        person1_name = st.text_input("1人目の名前", value=settings.get("person1_name", ""))
-        person2_name = st.text_input("2人目の名前", value=settings.get("person2_name", ""))
+        app_name = st.text_input("アプリ名", value=settings.get("app_name", "TripList"))
+        participant_count = st.number_input(
+            "参加者数",
+            min_value=1,
+            max_value=20,
+            value=default_count,
+            step=1,
+        )
+
+        participant_names = []
+        for idx in range(int(participant_count)):
+            default_name = current_participants[idx] if idx < len(current_participants) else ""
+            participant_names.append(
+                st.text_input(
+                    f"参加者{idx + 1}の名前",
+                    value=default_name,
+                    key=f"initial_participant_{idx}",
+                )
+            )
+
+        use_anniversary = st.checkbox(
+            "記念日カウントダウンを使う",
+            value=settings.get("use_anniversary", True),
+        )
         anniversary_name = st.text_input(
             "記念日の表示名",
-            value=settings.get("anniversary_name", "付き合った記念日"),
+            value=settings.get("anniversary_name", "記念日"),
+            disabled=not use_anniversary,
         )
         anniversary_date = st.date_input(
             "記念日",
             value=parse_date_text(settings.get("anniversary_date", ""), date.today()),
+            disabled=not use_anniversary,
         )
         submitted = st.form_submit_button("初期設定を保存")
 
     if submitted:
-        if not person1_name.strip() or not person2_name.strip():
-            st.warning("2人の名前を入力してください。")
+        cleaned_names = [name.strip() for name in participant_names if name.strip()]
+        if len(cleaned_names) != int(participant_count):
+            st.warning("選んだ人数分の参加者名を入力してください。")
             return False
 
-        settings["person1_name"] = person1_name.strip()
-        settings["person2_name"] = person2_name.strip()
-        settings["anniversary_name"] = anniversary_name.strip() or "付き合った記念日"
-        settings["anniversary_date"] = str(anniversary_date)
+        settings["app_name"] = app_name.strip() or "TripList"
+        set_participants(settings, cleaned_names)
+        settings["use_anniversary"] = bool(use_anniversary)
+        settings["anniversary_name"] = anniversary_name.strip() or "記念日"
+        settings["anniversary_date"] = str(anniversary_date) if use_anniversary else ""
         save_settings(settings)
         st.success("初期設定を保存しました。")
         st.rerun()
 
     return False
 
-
 def render_anniversary_countdown(settings):
+    if not settings.get("use_anniversary", True):
+        return
+
     anniversary_date_text = settings.get("anniversary_date", "")
     if not anniversary_date_text:
         return
 
     today = date.today()
     base_date = parse_date_text(anniversary_date_text, today)
-    days_together = max((today - base_date).days + 1, 0)
+    days_since = max((today - base_date).days + 1, 0)
     next_date = next_yearly_anniversary(base_date, today)
     days_left = (next_date - today).days
     label = anniversary_label(base_date, next_date)
@@ -578,43 +803,99 @@ def render_anniversary_countdown(settings):
     else:
         countdown_text = f"{label}まであと {days_left} 日"
 
-    anniversary_name = settings.get("anniversary_name", "付き合った記念日")
+    anniversary_name = settings.get("anniversary_name", "記念日")
     st.info(
-        f"💐 {anniversary_name}：付き合って {days_together:,} 日 ／ "
+        f"💐 {anniversary_name}から {days_since:,} 日 ／ "
         f"{countdown_text} ／ 記念日 {base_date.strftime('%Y年%m月%d日')}"
     )
 
 
 def render_personal_settings(settings):
-    with st.sidebar.expander("2人の設定"):
-        person1_name = st.text_input(
-            "1人目の名前",
-            value=settings.get("person1_name", ""),
-            key="settings_person1_name",
+    with st.sidebar.expander("アプリ設定"):
+        app_name = st.text_input(
+            "アプリ名",
+            value=settings.get("app_name", "TripList"),
+            key="settings_app_name",
         )
-        person2_name = st.text_input(
-            "2人目の名前",
-            value=settings.get("person2_name", ""),
-            key="settings_person2_name",
+
+        current_participants = get_participants(settings)
+        default_count = max(1, len(current_participants) or 2)
+        participant_count = st.number_input(
+            "参加者数",
+            min_value=1,
+            max_value=20,
+            value=default_count,
+            step=1,
+            key="settings_participant_count",
+        )
+
+        participant_names = []
+        for idx in range(int(participant_count)):
+            default_name = current_participants[idx] if idx < len(current_participants) else ""
+            participant_names.append(
+                st.text_input(
+                    f"参加者{idx + 1}の名前",
+                    value=default_name,
+                    key=f"settings_participant_{idx}",
+                )
+            )
+
+        use_anniversary = st.checkbox(
+            "記念日カウントダウンを使う",
+            value=settings.get("use_anniversary", True),
+            key="settings_use_anniversary",
         )
         anniversary_name = st.text_input(
             "記念日の表示名",
-            value=settings.get("anniversary_name", "付き合った記念日"),
+            value=settings.get("anniversary_name", "記念日"),
             key="settings_anniversary_name",
+            disabled=not use_anniversary,
         )
         anniversary_date = st.date_input(
             "記念日",
             value=parse_date_text(settings.get("anniversary_date", ""), date.today()),
             key="settings_anniversary_date",
+            disabled=not use_anniversary,
         )
 
         if st.button("設定を保存", key="save_personal_settings"):
-            settings["person1_name"] = person1_name.strip()
-            settings["person2_name"] = person2_name.strip()
-            settings["anniversary_name"] = anniversary_name.strip() or "付き合った記念日"
-            settings["anniversary_date"] = str(anniversary_date)
+            cleaned_names = [name.strip() for name in participant_names if name.strip()]
+            if len(cleaned_names) != int(participant_count):
+                st.warning("選んだ人数分の参加者名を入力してください。")
+                return
+
+            settings["app_name"] = app_name.strip() or "TripList"
+            set_participants(settings, cleaned_names)
+            settings["use_anniversary"] = bool(use_anniversary)
+            settings["anniversary_name"] = anniversary_name.strip() or "記念日"
+            settings["anniversary_date"] = str(anniversary_date) if use_anniversary else ""
             save_settings(settings)
             st.success("設定を保存しました。")
+            st.rerun()
+
+def render_data_management(trips):
+    with st.sidebar.expander("データ管理"):
+        st.caption("trips.json が大きくなったときは軽量化できます。")
+        st.write("trips.json:", file_size_text(DATA_FILE))
+        st.write("app_settings.json:", file_size_text(SETTINGS_FILE))
+
+        if st.button("JSONを軽量化", key="compact_json"):
+            before = file_size_text(DATA_FILE)
+            compact_data_files()
+            after = file_size_text(DATA_FILE)
+            st.success(f"軽量化しました：{before} → {after}")
+            st.rerun()
+
+        st.divider()
+        st.caption("公開前にサンプルデータを消したい場合だけ使ってください。")
+        confirm_reset = st.checkbox("すべての旅行データを削除する", key="confirm_reset_data")
+        if st.button("旅行データを全削除", key="reset_trips_data", disabled=not confirm_reset):
+            for trip in trips:
+                for photo in trip.get("photos", []):
+                    delete_file(photo.get("path", ""))
+            save_trips([])
+            st.session_state["selected_trip_index"] = 0
+            st.success("旅行データを削除しました。")
             st.rerun()
 
 
@@ -625,6 +906,7 @@ def render_personal_settings(settings):
 def render_sidebar(trips, settings):
     st.sidebar.title("旅行一覧")
     render_personal_settings(settings)
+    render_data_management(trips)
 
     with st.sidebar.expander("新規旅行を作成", expanded=not trips):
         new_trip_title = st.text_input("新規旅行タイトル", key="new_trip_title")
@@ -1003,7 +1285,7 @@ def collect_weather_targets(trip):
 
 def render_weather_tab(trip):
     st.subheader("天気予報")
-    st.caption("予定・宿泊に入力した場所から、今日から16日以内の天気を表示します。")
+    st.caption("予定・宿泊に入力した場所から天気を表示します。16日以内は予報、過去は実績、遠い未来は過去5年の同日参考値です。")
 
     targets = collect_weather_targets(trip)
     if not targets:
@@ -1147,7 +1429,8 @@ def render_cost_tab(trips, trip, trip_index):
     with col_total:
         st.metric("合計金額", f"{total:,}円")
     with col_person:
-        people = st.number_input("人数", min_value=1, value=2, key=f"people_{trip_index}")
+        default_people = max(1, len(get_participants(load_settings())))
+        people = st.number_input("人数", min_value=1, value=default_people, key=f"people_{trip_index}")
         st.metric("一人当たり", f"{total // people:,}円")
 
     st.subheader("カテゴリ別費用")
