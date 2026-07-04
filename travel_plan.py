@@ -1,4 +1,6 @@
 import json
+import re
+from copy import deepcopy
 from collections import defaultdict
 from io import BytesIO
 from pathlib import Path
@@ -7,6 +9,7 @@ from urllib.parse import quote_plus
 
 import requests
 import streamlit as st
+from supabase import create_client
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -15,10 +18,7 @@ from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
-DATA_FILE = Path("trips.json")
-SETTINGS_FILE = Path("app_settings.json")
-PHOTO_DIR = Path("trip_photos")
-PHOTO_DIR.mkdir(exist_ok=True)
+PHOTO_BUCKET = "trip-photos"
 
 CATEGORIES = ["交通", "食事", "観光", "ホテル", "買い物", "その他"]
 DEFAULT_PACKING_ITEMS = [
@@ -65,45 +65,205 @@ WEATHER_CODES = {
 # データ操作
 # =========================
 
+DEFAULT_SETTINGS = {
+    "app_name": "TripList",
+    "person1_name": "",
+    "person2_name": "",
+    "participants": [],
+    "anniversary_name": "記念日",
+    "anniversary_date": "",
+    "use_anniversary": True,
+}
+
+
+# =========================
+# Supabase / ログイン
+# =========================
+
+@st.cache_resource
+def get_supabase_client():
+    """Streamlit Secrets から Supabase クライアントを作る。"""
+    url = st.secrets.get("SUPABASE_URL", "")
+    key = st.secrets.get("SUPABASE_ANON_KEY", "")
+    if not url or not key:
+        st.error("Supabase の Secrets が未設定です。SUPABASE_URL と SUPABASE_ANON_KEY を設定してください。")
+        st.stop()
+    return create_client(url, key)
+
+
+def restore_auth_session():
+    """rerun後もログイン状態を復元する。"""
+    sb = get_supabase_client()
+    access_token = st.session_state.get("access_token")
+    refresh_token = st.session_state.get("refresh_token")
+    if access_token and refresh_token:
+        try:
+            sb.auth.set_session(access_token, refresh_token)
+        except Exception:
+            st.session_state.pop("access_token", None)
+            st.session_state.pop("refresh_token", None)
+            st.session_state.pop("user", None)
+    return sb
+
+
+def current_user():
+    user = st.session_state.get("user")
+    if user:
+        return user
+    try:
+        response = get_supabase_client().auth.get_user()
+        user = getattr(response, "user", None)
+        if user:
+            st.session_state["user"] = user
+        return user
+    except Exception:
+        return None
+
+
+def save_auth_session(session, user):
+    st.session_state["access_token"] = session.access_token
+    st.session_state["refresh_token"] = session.refresh_token
+    st.session_state["user"] = user
+    st.session_state.pop("trips", None)
+    st.session_state.pop("settings", None)
+
+
+def logout():
+    try:
+        get_supabase_client().auth.sign_out()
+    except Exception:
+        pass
+    for key in ["access_token", "refresh_token", "user", "trips", "settings", "selected_trip_index"]:
+        st.session_state.pop(key, None)
+    st.rerun()
+
+
+def render_auth_gate():
+    """ログインしていなければログイン/登録画面を表示する。"""
+    restore_auth_session()
+    if current_user():
+        return True
+
+    st.markdown("""
+    <h1>🌷 TripList 🌿</h1>
+    <p style="text-align:center; color:#8a6f60;">
+    ログインすると、自分だけの旅行データを保存できます。
+    </p>
+    """, unsafe_allow_html=True)
+
+    tab_login, tab_signup = st.tabs(["ログイン", "新規登録"])
+    sb = get_supabase_client()
+
+    with tab_login:
+        with st.form("login_form"):
+            email = st.text_input("メールアドレス", key="login_email")
+            password = st.text_input("パスワード", type="password", key="login_password")
+            submitted = st.form_submit_button("ログイン")
+        if submitted:
+            try:
+                result = sb.auth.sign_in_with_password({"email": email, "password": password})
+                save_auth_session(result.session, result.user)
+                st.rerun()
+            except Exception as e:
+                st.error(f"ログインできませんでした：{e}")
+
+    with tab_signup:
+        with st.form("signup_form"):
+            email = st.text_input("メールアドレス", key="signup_email")
+            password = st.text_input("パスワード", type="password", key="signup_password")
+            submitted = st.form_submit_button("新規登録")
+        if submitted:
+            try:
+                result = sb.auth.sign_up({"email": email, "password": password})
+                # メール確認OFFならそのままログインできる。ONなら確認メールが必要。
+                if getattr(result, "session", None):
+                    save_auth_session(result.session, result.user)
+                    ensure_user_data()
+                    st.rerun()
+                else:
+                    st.success("登録しました。確認メールが届いている場合は、メール認証後にログインしてください。")
+            except Exception as e:
+                st.error(f"登録できませんでした：{e}")
+
+    return False
+
+
+def ensure_user_data():
+    user = current_user()
+    if not user:
+        return
+    sb = get_supabase_client()
+    try:
+        existing = sb.table("app_data").select("user_id").eq("user_id", user.id).execute()
+        if not existing.data:
+            sb.table("app_data").insert({
+                "user_id": user.id,
+                "trips": [],
+                "settings": DEFAULT_SETTINGS,
+            }).execute()
+    except Exception as e:
+        st.error(f"Supabase の app_data を準備できませんでした：{e}")
+        st.stop()
+
+
+def load_user_data():
+    """Supabaseからログイン中ユーザーのデータを読み込んで session_state に入れる。"""
+    if "trips" in st.session_state and "settings" in st.session_state:
+        return
+    ensure_user_data()
+    user = current_user()
+    sb = get_supabase_client()
+    try:
+        result = sb.table("app_data").select("trips, settings").eq("user_id", user.id).single().execute()
+        row = result.data or {}
+        st.session_state["trips"] = row.get("trips") or []
+        settings = deepcopy(DEFAULT_SETTINGS)
+        saved_settings = row.get("settings") or {}
+        if isinstance(saved_settings, dict):
+            settings.update(saved_settings)
+        st.session_state["settings"] = normalize_settings(settings)
+    except Exception as e:
+        st.error(f"Supabase からデータを読み込めませんでした：{e}")
+        st.stop()
+
+
+def save_user_data():
+    user = current_user()
+    if not user:
+        return
+    sb = get_supabase_client()
+    trips = st.session_state.get("trips", [])
+    settings = normalize_settings(st.session_state.get("settings", DEFAULT_SETTINGS))
+    try:
+        sb.table("app_data").upsert({
+            "user_id": user.id,
+            "trips": trips,
+            "settings": settings,
+            "updated_at": datetime.now().isoformat(),
+        }).execute()
+    except Exception as e:
+        st.error(f"Supabase に保存できませんでした：{e}")
+        st.stop()
+
+
 def load_trips():
-    if DATA_FILE.exists():
-        return json.loads(DATA_FILE.read_text(encoding="utf-8"))
-    return []
+    load_user_data()
+    return st.session_state["trips"]
 
 
 def save_trips(trips):
-    """旅行データを軽量なJSONで保存する。indentを付けないので trips.json が巨大化しにくい。"""
-    DATA_FILE.write_text(
-        json.dumps(trips, ensure_ascii=False, separators=(",", ":")),
-        encoding="utf-8",
-    )
+    st.session_state["trips"] = trips
+    save_user_data()
 
 
 def load_settings():
-    default_settings = {
-        "app_name": "TripList",
-        "person1_name": "",
-        "person2_name": "",
-        "participants": [],
-        "anniversary_name": "記念日",
-        "anniversary_date": "",
-        "use_anniversary": True,
-    }
-    if SETTINGS_FILE.exists():
-        try:
-            saved = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            default_settings.update(saved)
-        except Exception:
-            pass
-    return normalize_settings(default_settings)
+    load_user_data()
+    return normalize_settings(st.session_state["settings"])
 
 
 def save_settings(settings):
-    settings = normalize_settings(settings)
-    SETTINGS_FILE.write_text(
-        json.dumps(settings, ensure_ascii=False, separators=(",", ":")),
-        encoding="utf-8",
-    )
+    st.session_state["settings"] = normalize_settings(settings)
+    save_user_data()
 
 
 def get_participants(settings):
@@ -135,14 +295,15 @@ def set_participants(settings, participants):
 
 
 def normalize_settings(settings):
-    set_participants(settings, get_participants(settings))
-    return settings
+    base = deepcopy(DEFAULT_SETTINGS)
+    if isinstance(settings, dict):
+        base.update(settings)
+    set_participants(base, get_participants(base))
+    return base
 
-
-def file_size_text(path):
-    if not path.exists():
-        return "0 B"
-    size = path.stat().st_size
+def approx_json_size_text(obj):
+    text = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    size = len(text.encode("utf-8"))
     if size < 1024:
         return f"{size} B"
     if size < 1024 * 1024:
@@ -151,11 +312,8 @@ def file_size_text(path):
 
 
 def compact_data_files():
-    """既存の trips.json / app_settings.json を軽量形式で保存し直す。"""
-    trips = load_trips()
-    save_trips(trips)
-    settings = load_settings()
-    save_settings(settings)
+    """Supabase内のデータを軽量なJSON形式で保存し直す。"""
+    save_user_data()
 
 
 def parse_date_text(value, default=None):
@@ -295,8 +453,57 @@ def icon_for_category(category):
     return icons.get(category, "✨")
 
 
+def safe_filename(name):
+    name = re.sub(r"[^0-9A-Za-zぁ-んァ-ヶ一-龥._-]+", "_", name)
+    return name[:120] or "file"
+
+
+def storage_path_for(filename):
+    user = current_user()
+    user_id = user.id if user else "anonymous"
+    return f"{user_id}/{timestamp()}_{safe_filename(filename)}"
+
+
+def upload_photo_to_storage(uploaded_file):
+    """Supabase Storage に写真を保存し、storage_pathを返す。"""
+    path = storage_path_for(uploaded_file.name)
+    data = uploaded_file.getvalue()
+    content_type = getattr(uploaded_file, "type", None) or "image/jpeg"
+    sb = get_supabase_client()
+    try:
+        sb.storage.from_(PHOTO_BUCKET).upload(
+            path,
+            data,
+            file_options={"content-type": content_type, "upsert": "true"},
+        )
+    except TypeError:
+        # supabase-py のバージョン差分への保険
+        sb.storage.from_(PHOTO_BUCKET).upload(path, data)
+    return path
+
+
+def download_photo_from_storage(path_text):
+    if not path_text:
+        return None
+    try:
+        return get_supabase_client().storage.from_(PHOTO_BUCKET).download(path_text)
+    except Exception:
+        return None
+
+
 def delete_file(path_text):
-    if path_text and Path(path_text).exists():
+    """Supabase Storage または旧ローカル写真を削除する。"""
+    if not path_text:
+        return
+    # 新形式: storage_path のみ
+    if not Path(path_text).exists():
+        try:
+            get_supabase_client().storage.from_(PHOTO_BUCKET).remove([path_text])
+        except Exception:
+            pass
+        return
+    # 旧形式: ローカルファイル
+    if Path(path_text).exists():
         Path(path_text).unlink()
 
 
@@ -875,24 +1082,24 @@ def render_personal_settings(settings):
 
 def render_data_management(trips):
     with st.sidebar.expander("データ管理"):
-        st.caption("trips.json が大きくなったときは軽量化できます。")
-        st.write("trips.json:", file_size_text(DATA_FILE))
-        st.write("app_settings.json:", file_size_text(SETTINGS_FILE))
+        st.caption("データはログイン中ユーザーごとに Supabase に保存されます。")
+        st.write("旅行データ量:", approx_json_size_text(trips))
+        st.write("設定データ量:", approx_json_size_text(load_settings()))
 
-        if st.button("JSONを軽量化", key="compact_json"):
-            before = file_size_text(DATA_FILE)
+        if st.button("データを軽量化", key="compact_json"):
+            before = approx_json_size_text(trips)
             compact_data_files()
-            after = file_size_text(DATA_FILE)
+            after = approx_json_size_text(load_trips())
             st.success(f"軽量化しました：{before} → {after}")
             st.rerun()
 
         st.divider()
-        st.caption("公開前にサンプルデータを消したい場合だけ使ってください。")
+        st.caption("自分の旅行データだけを全削除します。")
         confirm_reset = st.checkbox("すべての旅行データを削除する", key="confirm_reset_data")
         if st.button("旅行データを全削除", key="reset_trips_data", disabled=not confirm_reset):
             for trip in trips:
                 for photo in trip.get("photos", []):
-                    delete_file(photo.get("path", ""))
+                    delete_file(photo.get("storage_path", photo.get("path", "")))
             save_trips([])
             st.session_state["selected_trip_index"] = 0
             st.success("旅行データを削除しました。")
@@ -904,7 +1111,12 @@ def render_data_management(trips):
 # =========================
 
 def render_sidebar(trips, settings):
+    user = current_user()
     st.sidebar.title("旅行一覧")
+    if user:
+        st.sidebar.caption(f"ログイン中：{user.email}")
+        if st.sidebar.button("ログアウト", key="logout_button"):
+            logout()
     render_personal_settings(settings)
     render_data_management(trips)
 
@@ -1481,13 +1693,12 @@ def render_photo_tab(trips, trip, trip_index):
             st.warning("写真を選択してください")
         else:
             for photo in uploaded_photos:
-                save_path = PHOTO_DIR / f"{timestamp()}_{photo.name}"
-                with open(save_path, "wb") as f:
-                    f.write(photo.getbuffer())
+                storage_path = upload_photo_to_storage(photo)
                 trip["photos"].append({
-                    "path": str(save_path),
+                    "storage_path": storage_path,
                     "caption": photo_caption,
                     "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "mime": getattr(photo, "type", "image/jpeg"),
                 })
             save_trips(trips)
             st.rerun()
@@ -1497,10 +1708,14 @@ def render_photo_tab(trips, trip, trip_index):
         return
 
     for photo_i, photo in enumerate(trip["photos"]):
-        path_text = photo.get("path", "")
+        storage_path = photo.get("storage_path", "")
+        legacy_path = photo.get("path", "")
         with st.container():
-            if path_text and Path(path_text).exists():
-                st.image(path_text, caption=photo.get("caption", ""), use_column_width=True)
+            image_data = download_photo_from_storage(storage_path) if storage_path else None
+            if image_data:
+                st.image(image_data, caption=photo.get("caption", ""), use_column_width=True)
+            elif legacy_path and Path(legacy_path).exists():
+                st.image(legacy_path, caption=photo.get("caption", ""), use_column_width=True)
             else:
                 st.warning("写真ファイルが見つかりません")
             st.caption(photo.get("created_at", ""))
@@ -1512,7 +1727,7 @@ def render_photo_tab(trips, trip, trip_index):
                     st.rerun()
             with col_delete:
                 if st.button("写真を削除", key=f"delete_photo_{trip_index}_{photo_i}"):
-                    delete_file(path_text)
+                    delete_file(storage_path or legacy_path)
                     trip["photos"].pop(photo_i)
                     save_trips(trips)
                     st.rerun()
@@ -1555,7 +1770,7 @@ def render_trip_title_editor(trips, trip, trip_index):
         st.write("")
         if st.button("旅行を削除", key=f"delete_trip_{trip_index}"):
             for photo in trip.get("photos", []):
-                delete_file(photo.get("path", ""))
+                delete_file(photo.get("storage_path", photo.get("path", "")))
             trips.pop(trip_index)
             save_trips(trips)
             st.session_state["selected_trip_index"] = max(0, trip_index - 1)
@@ -1591,9 +1806,14 @@ def render_selected_trip(trips, trip_index):
 # =========================
 
 def main():
-    settings = load_settings()
-    st.set_page_config(page_title=app_title(settings), page_icon="🌷", layout="wide")
+    st.set_page_config(page_title="TripList", page_icon="🌷", layout="wide")
     apply_style()
+
+    if not render_auth_gate():
+        return
+
+    load_user_data()
+    settings = load_settings()
 
     if not render_initial_setup(settings):
         return
