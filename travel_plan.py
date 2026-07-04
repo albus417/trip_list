@@ -22,17 +22,17 @@ st.markdown("""
 
 /* アプリ全体 */
 .stApp{
-    background: #F7F6F2;
+    background: #FFF8F1;
 }
 
 /* サイドバー */
 section[data-testid="stSidebar"]{
-    background: #EAE4D5;
+    background: #F4E8DA;
 }
 
 /* ボタン */
 .stButton>button{
-    background:#6AA84F;
+    background:#C8A97E;
     color:white;
     border-radius:12px;
     border:none;
