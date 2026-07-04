@@ -164,12 +164,12 @@ def save_auth_session(session, user):
     st.session_state["user"] = user
 
     # ユーザーが変わった可能性があるので、旅行データは読み直す。
-    for key in ["trips", "settings", "selected_trip_index"]:
+    for key in ["trips", "settings", "selected_trip_index", "group_id", "my_groups"]:
         st.session_state.pop(key, None)
 
 
 def clear_auth_state():
-    for key in ["access_token", "refresh_token", "user", "trips", "settings", "selected_trip_index"]:
+    for key in ["access_token", "refresh_token", "user", "trips", "settings", "selected_trip_index", "group_id", "my_groups"]:
         st.session_state.pop(key, None)
 
 
@@ -207,7 +207,7 @@ def render_auth_header():
     <div style="text-align:center; padding: 1.5rem 0 0.5rem 0;">
         <h1 style="font-size: 3rem; margin-bottom: 0.2rem;">🌷 TripList 🌿</h1>
         <p style="color:#8a6f60; font-size:1.05rem;">
-            ログインすると、自分だけの旅行データをクラウドに保存できます。
+            ログインすると、参加しているグループの旅行データをクラウドで共同編集できます。
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -312,15 +312,252 @@ def render_auth_gate():
     return False
 
 
-def load_user_data():
-    """Supabaseからログイン中ユーザーのデータを読み込んで session_state に入れる。"""
-    if "trips" in st.session_state and "settings" in st.session_state:
-        return
-    ensure_user_data()
+
+# =========================
+# 共有グループ / クラウド保存
+# =========================
+
+def reset_cached_trip_data():
+    for key in ["trips", "settings", "selected_trip_index"]:
+        st.session_state.pop(key, None)
+
+
+def list_my_groups():
+    """ログインユーザーが参加している共有グループ一覧を取得する。"""
     user = current_user()
+    if not user:
+        return []
+
+    if "my_groups" in st.session_state:
+        return st.session_state["my_groups"]
+
     sb = get_supabase_client()
     try:
-        result = sb.table("app_data").select("trips, settings").eq("user_id", user.id).single().execute()
+        result = (
+            sb.table("group_members")
+            .select("group_id, role, trip_groups(id, name, created_by)")
+            .eq("user_id", user.id)
+            .execute()
+        )
+        groups = []
+        for row in result.data or []:
+            group = row.get("trip_groups") or {}
+            groups.append({
+                "id": row.get("group_id") or group.get("id"),
+                "name": group.get("name") or "無題のグループ",
+                "role": row.get("role", "member"),
+                "created_by": group.get("created_by", ""),
+            })
+        st.session_state["my_groups"] = groups
+        return groups
+    except Exception as e:
+        st.error(f"共有グループを読み込めませんでした：{e}")
+        st.stop()
+
+
+def create_group(group_name: str, invite_code: str):
+    """共有グループを作成し、作成者をメンバーに入れる。"""
+    user = current_user()
+    if not user:
+        return None
+
+    group_name = (group_name or "").strip() or "無題のグループ"
+    invite_code = (invite_code or "").strip()
+    if len(invite_code) < 4:
+        raise ValueError("合言葉は4文字以上にしてください。")
+
+    sb = get_supabase_client()
+    group_result = sb.table("trip_groups").insert({
+        "name": group_name,
+        "invite_code": invite_code,
+        "created_by": user.id,
+    }).execute()
+
+    group = (group_result.data or [None])[0]
+    if not group:
+        raise RuntimeError("共有グループを作成できませんでした。")
+
+    group_id = group["id"]
+    sb.table("group_members").insert({
+        "group_id": group_id,
+        "user_id": user.id,
+        "role": "owner",
+    }).execute()
+    sb.table("group_data").insert({
+        "group_id": group_id,
+        "trips": [],
+        "settings": deepcopy(DEFAULT_SETTINGS),
+    }).execute()
+
+    st.session_state.pop("my_groups", None)
+    st.session_state["group_id"] = group_id
+    reset_cached_trip_data()
+    return group_id
+
+
+def join_group(group_id: str, invite_code: str) -> bool:
+    """グループIDと合言葉で共有グループに参加する。"""
+    group_id = (group_id or "").strip()
+    invite_code = (invite_code or "").strip()
+    if not group_id or not invite_code:
+        return False
+
+    sb = get_supabase_client()
+    result = sb.rpc("join_trip_group", {
+        "p_group_id": group_id,
+        "p_invite_code": invite_code,
+    }).execute()
+
+    ok = bool(result.data)
+    if ok:
+        st.session_state.pop("my_groups", None)
+        st.session_state["group_id"] = group_id
+        reset_cached_trip_data()
+    return ok
+
+
+def get_current_group_id():
+    groups = list_my_groups()
+    if not groups:
+        return None
+
+    saved = st.session_state.get("group_id")
+    group_ids = [g["id"] for g in groups]
+    if saved in group_ids:
+        return saved
+
+    st.session_state["group_id"] = group_ids[0]
+    reset_cached_trip_data()
+    return group_ids[0]
+
+
+def current_group_name():
+    group_id = get_current_group_id()
+    for group in list_my_groups():
+        if group["id"] == group_id:
+            return group.get("name", "無題のグループ")
+    return "無題のグループ"
+
+
+def render_group_gate():
+    """ログイン後、共有グループを作成/参加/選択する画面。"""
+    groups = list_my_groups()
+
+    if groups:
+        return True
+
+    st.markdown("""
+    <div style="text-align:center; padding: 1.0rem 0 0.5rem 0;">
+        <h1 style="font-size: 2.4rem; margin-bottom: 0.2rem;">👥 共有グループを作成・参加</h1>
+        <p style="color:#8a6f60; font-size:1.0rem;">
+            恋人・家族・友達と同じ旅行データを共同編集できます。
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    tab_create, tab_join = st.tabs(["グループを作成", "グループに参加"])
+
+    with tab_create:
+        st.info("最初に使う人は、共有グループを作成してください。あとで相手にグループIDと合言葉を伝えると共同編集できます。")
+        with st.form("create_group_form"):
+            group_name = st.text_input("グループ名", placeholder="例：陽咲・雷人 / 家族旅行 / 友達旅行")
+            invite_code = st.text_input("合言葉（4文字以上）", type="password", placeholder="相手にだけ教える合言葉")
+            submitted = st.form_submit_button("グループを作成")
+        if submitted:
+            try:
+                gid = create_group(group_name, invite_code)
+                st.success("共有グループを作成しました。")
+                st.info(f"相手に伝えるグループID：`{gid}`")
+                st.rerun()
+            except Exception as e:
+                st.error(f"共有グループを作成できませんでした：{e}")
+
+    with tab_join:
+        st.info("すでに誰かが作ったグループに入る場合は、グループIDと合言葉を入力してください。")
+        with st.form("join_group_form"):
+            group_id = st.text_input("グループID")
+            invite_code = st.text_input("合言葉", type="password")
+            submitted = st.form_submit_button("グループに参加")
+        if submitted:
+            try:
+                if join_group(group_id, invite_code):
+                    st.success("共有グループに参加しました。")
+                    st.rerun()
+                else:
+                    st.error("グループIDまたは合言葉が違います。")
+            except Exception as e:
+                st.error(f"共有グループに参加できませんでした：{e}")
+
+    return False
+
+
+def render_group_sidebar():
+    """サイドバー上部にグループ選択・共有情報を表示する。"""
+    groups = list_my_groups()
+    if not groups:
+        return None
+
+    current_id = get_current_group_id()
+    group_ids = [g["id"] for g in groups]
+    index = group_ids.index(current_id) if current_id in group_ids else 0
+
+    with st.sidebar.expander("共有グループ", expanded=True):
+        selected_group_id = st.selectbox(
+            "開くグループ",
+            options=group_ids,
+            index=index,
+            format_func=lambda gid: next((g["name"] for g in groups if g["id"] == gid), "無題のグループ"),
+            key="group_selector",
+        )
+        if selected_group_id != current_id:
+            st.session_state["group_id"] = selected_group_id
+            reset_cached_trip_data()
+            st.rerun()
+
+        st.caption("相手に共有する情報")
+        st.code(selected_group_id, language=None)
+        st.caption("このグループIDと合言葉を相手に伝えると共同編集できます。")
+
+        st.divider()
+        st.caption("新しいグループを作成")
+        new_group_name = st.text_input("グループ名", key="sidebar_new_group_name")
+        new_invite_code = st.text_input("合言葉", type="password", key="sidebar_new_invite_code")
+        if st.button("グループを作成", key="sidebar_create_group"):
+            try:
+                create_group(new_group_name, new_invite_code)
+                st.success("作成しました。")
+                st.rerun()
+            except Exception as e:
+                st.error(e)
+
+        st.caption("既存グループに参加")
+        join_id = st.text_input("参加するグループID", key="sidebar_join_group_id")
+        join_code = st.text_input("参加用合言葉", type="password", key="sidebar_join_code")
+        if st.button("参加する", key="sidebar_join_group"):
+            try:
+                if join_group(join_id, join_code):
+                    st.success("参加しました。")
+                    st.rerun()
+                else:
+                    st.error("グループIDまたは合言葉が違います。")
+            except Exception as e:
+                st.error(e)
+
+    return st.session_state.get("group_id")
+
+
+def load_user_data():
+    """Supabaseから選択中グループの共有データを読み込んで session_state に入れる。"""
+    if "trips" in st.session_state and "settings" in st.session_state:
+        return
+
+    group_id = get_current_group_id()
+    if not group_id:
+        return
+
+    sb = get_supabase_client()
+    try:
+        result = sb.table("group_data").select("trips, settings").eq("group_id", group_id).single().execute()
         row = result.data or {}
         st.session_state["trips"] = row.get("trips") or []
         settings = deepcopy(DEFAULT_SETTINGS)
@@ -329,26 +566,26 @@ def load_user_data():
             settings.update(saved_settings)
         st.session_state["settings"] = normalize_settings(settings)
     except Exception as e:
-        st.error(f"Supabase からデータを読み込めませんでした：{e}")
+        st.error(f"Supabase から共有データを読み込めませんでした：{e}")
         st.stop()
 
 
 def save_user_data():
-    user = current_user()
-    if not user:
+    group_id = get_current_group_id()
+    if not group_id:
         return
     sb = get_supabase_client()
     trips = st.session_state.get("trips", [])
     settings = normalize_settings(st.session_state.get("settings", DEFAULT_SETTINGS))
     try:
-        sb.table("app_data").upsert({
-            "user_id": user.id,
+        sb.table("group_data").upsert({
+            "group_id": group_id,
             "trips": trips,
             "settings": settings,
             "updated_at": datetime.now().isoformat(),
         }).execute()
     except Exception as e:
-        st.error(f"Supabase に保存できませんでした：{e}")
+        st.error(f"Supabase に共有データを保存できませんでした：{e}")
         st.stop()
 
 
@@ -370,7 +607,6 @@ def load_settings():
 def save_settings(settings):
     st.session_state["settings"] = normalize_settings(settings)
     save_user_data()
-
 
 def get_participants(settings):
     """参加者リストを取得する。古い person1_name / person2_name 形式も自動で移行する。"""
@@ -1188,7 +1424,7 @@ def render_personal_settings(settings):
 
 def render_data_management(trips):
     with st.sidebar.expander("データ管理"):
-        st.caption("データはログイン中ユーザーごとに Supabase に保存されます。")
+        st.caption("データは選択中の共有グループに保存され、メンバー全員で共同編集できます。")
         st.write("旅行データ量:", approx_json_size_text(trips))
         st.write("設定データ量:", approx_json_size_text(load_settings()))
 
@@ -1200,7 +1436,7 @@ def render_data_management(trips):
             st.rerun()
 
         st.divider()
-        st.caption("自分の旅行データだけを全削除します。")
+        st.caption("選択中グループの旅行データだけを全削除します。")
         confirm_reset = st.checkbox("すべての旅行データを削除する", key="confirm_reset_data")
         if st.button("旅行データを全削除", key="reset_trips_data", disabled=not confirm_reset):
             for trip in trips:
@@ -1219,8 +1455,10 @@ def render_data_management(trips):
 def render_sidebar(trips, settings):
     user = current_user()
     st.sidebar.title("旅行一覧")
+    render_group_sidebar()
     if user:
         st.sidebar.caption(f"ログイン中：{user.email}")
+        st.sidebar.caption(f"現在のグループ：{current_group_name()}")
         if st.sidebar.button("ログアウト", key="logout_button"):
             logout()
     render_personal_settings(settings)
@@ -1916,6 +2154,9 @@ def main():
     apply_style()
 
     if not render_auth_gate():
+        return
+
+    if not render_group_gate():
         return
 
     load_user_data()
