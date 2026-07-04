@@ -307,9 +307,15 @@ def render_other_card(group_id: str, trips: list[dict], settings: dict, trip: di
 
 def tab_schedule(group_id: str, trips: list[dict], settings: dict, trip: dict):
     st.subheader("予定を追加")
+
+    if "last_plan_date" not in st.session_state:
+        st.session_state["last_plan_date"] = date.today()
+    if "last_hotel_date" not in st.session_state:
+        st.session_state["last_hotel_date"] = date.today()
+
     with st.form("add_plan_form", clear_on_submit=True):
         c1, c2, c3 = st.columns([1,1,1])
-        d = c1.date_input("年月日", value=date.today())
+        d = c1.date_input("年月日", value=st.session_state["last_plan_date"])
         tm = c2.time_input("時間")
         cat = c3.selectbox("カテゴリ", CATEGORIES)
         content = st.text_input("内容")
@@ -319,17 +325,19 @@ def tab_schedule(group_id: str, trips: list[dict], settings: dict, trip: dict):
         url = st.text_input("URL")
         if st.form_submit_button("予定を追加"):
             trip["plans"].append({"id":new_id(), "date":d.isoformat(), "time":tm.strftime("%H:%M"), "category":cat, "content":content, "place":place, "amount":int(amount), "memo":memo, "url":url})
+            st.session_state["last_plan_date"] = d
             save_current(group_id, trips, settings); st.rerun()
 
     st.subheader("宿泊を追加")
     with st.form("add_hotel_form", clear_on_submit=True):
-        d = st.date_input("宿泊日", value=date.today(), key="hotel_add_date")
+        d = st.date_input("宿泊日", value=st.session_state["last_hotel_date"], key="hotel_add_date")
         hotel = st.text_input("宿泊施設")
         place = st.text_input("宿泊場所")
         amount = st.number_input("宿泊金額", min_value=0, step=100)
         memo = st.text_area("宿泊メモ")
         if st.form_submit_button("宿泊を追加"):
             trip["hotels"].append({"id":new_id(), "date":d.isoformat(), "hotel":hotel, "place":place, "amount":int(amount), "memo":memo})
+            st.session_state["last_hotel_date"] = d
             save_current(group_id, trips, settings); st.rerun()
 
     st.subheader("その他費用を追加")
