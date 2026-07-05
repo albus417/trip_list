@@ -347,13 +347,43 @@ def tab_schedule(group_id: str, trips: list[dict], settings: dict, trip: dict):
             save_current(group_id, trips, settings); st.rerun()
 
     st.subheader("タイムライン")
-    items = sorted(trip.get("plans", []), key=sort_key_date_time)
-    if not items and not trip.get("hotels"):
+    timeline_items = []
+
+    for p in trip.get("plans", []):
+        timeline_items.append({
+            "type": "plan",
+            "date": p.get("date", ""),
+            "time": p.get("time", ""),
+            "sort_time": p.get("time", "99:98"),
+            "data": p,
+        })
+
+    for h in trip.get("hotels", []):
+        timeline_items.append({
+            "type": "hotel",
+            "date": h.get("date", ""),
+            "time": "",
+            "sort_time": "99:99",  # 同じ日の最後に宿泊を置く
+            "data": h,
+        })
+
+    timeline_items = sorted(
+        timeline_items,
+        key=lambda x: (
+            x["date"] or "9999-99-99",
+            x["sort_time"] or "99:98",
+        )
+    )
+
+    if not timeline_items and not trip.get("others"):
         st.info("まだ日程はありません。")
-    for p in items:
-        render_plan_card(group_id, trips, settings, trip, p)
-    for h in sorted(trip.get("hotels", []), key=sort_key_date_time):
-        render_hotel_card(group_id, trips, settings, trip, h)
+
+    for item in timeline_items:
+        if item["type"] == "plan":
+            render_plan_card(group_id, trips, settings, trip, item["data"])
+        elif item["type"] == "hotel":
+            render_hotel_card(group_id, trips, settings, trip, item["data"])
+
     for o in trip.get("others", []):
         render_other_card(group_id, trips, settings, trip, o)
 
