@@ -165,26 +165,22 @@ def render_group_gate() -> str | None:
     tab_create, tab_join = st.tabs(["グループ作成", "グループに参加"])
     with tab_create:
         name = st.text_input("グループ名", placeholder="例：陽咲・雷人旅行")
-        passcode = st.text_input("合言葉", type="password", help="参加する人に共有してください。")
+        st.caption("グループを作成すると、招待コードが自動で発行されます。相手にはその招待コードだけ共有してください。")
         if st.button("グループを作成"):
-            if not passcode:
-                st.warning("合言葉を入力してください。")
-            else:
-                gid = create_group(name, passcode)
-                st.session_state["selected_group_id"] = gid
-                st.success("グループを作成しました。")
-                st.rerun()
+            gid = create_group(name)
+            st.session_state["selected_group_id"] = gid
+            st.success("グループを作成しました。サイドバーに表示される招待コードを共有してください。")
+            st.rerun()
     with tab_join:
         code = st.text_input("招待コード")
-        passcode = st.text_input("合言葉", type="password", key="join_passcode")
         if st.button("参加する"):
-            gid = join_group(code, passcode)
+            gid = join_group(code)
             if gid:
                 st.session_state["selected_group_id"] = gid
                 st.success("グループに参加しました。")
                 st.rerun()
             else:
-                st.error("招待コードまたは合言葉が違います。")
+                st.error("招待コードが見つかりません。")
     return None
 
 # ------------------------- trip operations -------------------------
