@@ -174,7 +174,7 @@ def render_group_gate() -> str | None:
     with tab_join:
         code = st.text_input("招待コード")
         if st.button("参加する"):
-            gid = join_group(code, "")
+            gid = join_group(code)
             if gid:
                 st.session_state["selected_group_id"] = gid
                 st.success("グループに参加しました。")
