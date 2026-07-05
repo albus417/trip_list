@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 from .config import get_supabase_client, DEFAULT_SETTINGS
-from .utils import hash_passcode, make_invite_code, now_iso
+from .utils import make_invite_code, now_iso
 
 
 def current_user_id() -> str:
@@ -28,14 +28,14 @@ def list_my_groups() -> list[dict]:
     return groups
 
 
-def create_group(name: str, passcode: str) -> str:
+def create_group(name: str) -> str:
+    """Create a shared group. Joining requires only the invite_code."""
     sb = get_supabase_client()
     uid = current_user_id()
     invite_code = make_invite_code()
     group = sb.table("trip_groups").insert({
         "name": name.strip() or "旅行グループ",
         "invite_code": invite_code,
-        "passcode_hash": hash_passcode(passcode),
         "created_by": uid,
     }).execute().data[0]
     group_id = group["id"]
@@ -52,11 +52,12 @@ def create_group(name: str, passcode: str) -> str:
     return group_id
 
 
-def join_group(invite_code: str, passcode: str) -> str | None:
+def join_group(invite_code: str) -> str | None:
+    """Join a group by invite code only."""
     sb = get_supabase_client()
     uid = current_user_id()
     code = (invite_code or "").strip().upper()
-    groups = sb.table("trip_groups").select("id,name").eq("invite_code", code).eq("passcode_hash", hash_passcode(passcode)).limit(1).execute().data or []
+    groups = sb.table("trip_groups").select("id,name").eq("invite_code", code).limit(1).execute().data or []
     if not groups:
         return None
     group_id = groups[0]["id"]
