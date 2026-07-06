@@ -5,6 +5,14 @@ from .auth import get_user
 from .config import get_supabase_client, DEFAULT_SETTINGS
 from .utils import make_invite_code, now_iso
 
+def get_authed_supabase_client():
+    sb = get_authed_supabase_client()
+    token = st.session_state.get("access_token")
+
+    if token:
+        sb.postgrest.auth(token)
+
+    return sb
 
 def current_user_id() -> str:
     user = get_user()
@@ -18,7 +26,7 @@ def current_user_id() -> str:
 
 
 def list_my_groups() -> list[dict]:
-    sb = get_supabase_client()
+    sb = get_authed_supabase_client()
     uid = current_user_id()
     if not uid:
         return []
@@ -35,7 +43,7 @@ def list_my_groups() -> list[dict]:
 
 def create_group(name: str) -> str:
     """Create a shared group. Joining requires only the invite_code."""
-    sb = get_supabase_client()
+    sb = get_authed_supabase_client()
     uid = current_user_id()
     invite_code = make_invite_code()
     group = sb.table("trip_groups").insert({
@@ -58,7 +66,7 @@ def create_group(name: str) -> str:
 
 
 def join_group(invite_code: str) -> str | None:
-    sb = get_supabase_client()
+    sb = get_authed_supabase_client()
     uid = current_user_id()
     code = (invite_code or "").strip().upper()
 
@@ -105,7 +113,7 @@ def join_group(invite_code: str) -> str | None:
     return group_id
 
 def get_group_data(group_id: str) -> dict:
-    sb = get_supabase_client()
+    sb = get_authed_supabase_client()
     rows = sb.table("trip_group_data").select("trips,settings,updated_at").eq("group_id", group_id).limit(1).execute().data or []
     if not rows:
         sb.table("trip_group_data").insert({"group_id": group_id, "trips": [], "settings": DEFAULT_SETTINGS}).execute()
@@ -114,7 +122,7 @@ def get_group_data(group_id: str) -> dict:
 
 
 def save_group_data(group_id: str, trips: list[dict], settings: dict):
-    sb = get_supabase_client()
+    sb = get_authed_supabase_client()
     sb.table("trip_group_data").upsert({
         "group_id": group_id,
         "trips": trips,
@@ -128,5 +136,5 @@ def rename_group(group_id: str, name: str):
 
 
 def get_members(group_id: str) -> list[dict]:
-    sb = get_supabase_client()
+    sb = get_authed_supabase_client()
     return sb.table("trip_group_members").select("user_id,role,joined_at").eq("group_id", group_id).execute().data or []
