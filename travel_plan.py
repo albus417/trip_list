@@ -623,9 +623,9 @@ def main():
     trips = [normalize_trip(t) for t in data.get("trips", [])]
     settings = data.get("settings") or DEFAULT_SETTINGS
     if settings.get("anniversary_date"):
-    d = datetime.fromisoformat(settings["anniversary_date"]).date()
-    days = (date.today() - d).days
-    st.success(f"{settings.get('anniversary_name', '記念日')}から {days} 日")
+        d = datetime.fromisoformat(settings["anniversary_date"]).date()
+        days = (date.today() - d).days
+        st.success(f"{settings.get('anniversary_name', '記念日')}から {days} 日")
 
     with st.sidebar.expander("グループ設定"):
         app_title = st.text_input("アプリタイトル", value=settings.get("app_title", "TripList"))
