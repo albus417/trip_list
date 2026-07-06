@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import streamlit as st
+from .auth import get_user
 from .config import get_supabase_client, DEFAULT_SETTINGS
 from .utils import make_invite_code, now_iso
 
 
 def current_user_id() -> str:
-    user = st.session_state.get("user")
+    user = get_user()
     if user is None:
         return ""
-    return user.id
+
+    if isinstance(user, dict):
+        return user.get("id", "")
+
+    return getattr(user, "id", "")
 
 
 def list_my_groups() -> list[dict]:
@@ -57,12 +62,17 @@ def join_group(invite_code: str) -> str | None:
     uid = current_user_id()
     code = (invite_code or "").strip().upper()
 
-    if not code or not uid:
+    if not code:
+        st.error("招待コードが空です。")
+        return None
+
+    if not uid:
+        st.error("ログイン中のユーザーIDが取得できていません。ログアウトして再ログインしてください。")
         return None
 
     groups = (
         sb.table("trip_groups")
-        .select("id,name")
+        .select("id,name,invite_code")
         .eq("invite_code", code)
         .limit(1)
         .execute()
