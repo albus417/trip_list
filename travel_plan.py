@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
+from collections import defaultdict
+import html
 import pandas as pd
 import requests
 import streamlit as st
@@ -67,6 +69,14 @@ h1, h2, h3 { color: #735343; }
 .small-muted { color: #7d6b61; font-size: 0.92rem; }
 .big-title { text-align:center; font-size: 3.0rem; color: #735343; font-weight: 800; margin-bottom: 0.2rem; }
 .subtitle { text-align:center; color:#7d6b61; margin-bottom: 1.5rem; }
+.schedule-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 12px 0 24px 0; }
+.schedule-day { background: rgba(255,255,255,0.94); border: 1px solid #ead7c5; border-radius: 16px; padding: 12px; box-shadow: 0 6px 16px rgba(120,80,60,0.08); min-height: 180px; }
+.schedule-day-header { font-weight: 800; color: #735343; border-bottom: 1px solid #ead7c5; padding-bottom: 8px; margin-bottom: 10px; }
+.schedule-item { background: #fff7f0; border-left: 5px solid #C8A97E; border-radius: 10px; padding: 8px 9px; margin: 8px 0; font-size: 0.92rem; }
+.schedule-item.hotel { background: #f1f7ff; border-left-color: #7aa7d9; }
+.schedule-time { font-weight: 800; color: #735343; }
+.schedule-place { color: #7d6b61; font-size: 0.84rem; margin-top: 2px; }
+.day-section-title { background: #fff; border: 1px solid #ead7c5; border-radius: 14px; padding: 10px 14px; margin: 18px 0 8px 0; font-weight: 800; color: #735343; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -299,6 +309,127 @@ def render_other_card(group_id: str, trips: list[dict], settings: dict, trip: di
                 if c2.form_submit_button("削除"):
                     delete_item(trip["others"], o["id"]); save_current(group_id, trips, settings); st.rerun()
 
+
+# ------------------------- timeline helpers -------------------------
+
+def _parse_date(value: str):
+    try:
+        return datetime.fromisoformat(value).date()
+    except Exception:
+        return None
+
+
+def _date_label(value: str) -> str:
+    d = _parse_date(value)
+    if not d:
+        return value or "日付未定"
+    weekdays = ["月", "火", "水", "木", "金", "土", "日"]
+    return f"{d.month}/{d.day}（{weekdays[d.weekday()]}）"
+
+
+def _escape(value) -> str:
+    return html.escape(str(value or ""), quote=True)
+
+
+def build_timeline_items(trip: dict) -> list[dict]:
+    """日付順 → 時間順 → 同じ日の最後に宿泊、になるようにまとめる。"""
+    items = []
+
+    for p in trip.get("plans", []):
+        items.append({
+            "type": "plan",
+            "date": p.get("date", ""),
+            "time": p.get("time", ""),
+            "sort_time": p.get("time") or "99:98",
+            "title": p.get("content", "予定"),
+            "place": p.get("place", ""),
+            "category": p.get("category", "その他"),
+            "data": p,
+        })
+
+    for h in trip.get("hotels", []):
+        items.append({
+            "type": "hotel",
+            "date": h.get("date", ""),
+            "time": "",
+            "sort_time": "99:99",
+            "title": h.get("hotel", "宿泊"),
+            "place": h.get("place", ""),
+            "category": "宿泊",
+            "data": h,
+        })
+
+    return sorted(
+        items,
+        key=lambda x: (
+            x.get("date") or "9999-99-99",
+            x.get("sort_time") or "99:98",
+            1 if x.get("type") == "hotel" else 0,
+        )
+    )
+
+
+def group_timeline_by_date(trip: dict) -> dict[str, list[dict]]:
+    grouped = defaultdict(list)
+    for item in build_timeline_items(trip):
+        grouped[item.get("date", "")].append(item)
+    return dict(grouped)
+
+
+def render_schedule_board(trip: dict):
+    """写真の週間バーチカル手帳に近い、日付ごとの見やすいボード表示。"""
+    grouped = group_timeline_by_date(trip)
+
+    if not grouped:
+        st.info("予定や宿泊を追加すると、ここに日付別のスケジュール表が表示されます。")
+        return
+
+    html_parts = ["<div class='schedule-board'>"]
+
+    for day in sorted(grouped.keys() or [""]):
+        html_parts.append("<div class='schedule-day'>")
+        html_parts.append(f"<div class='schedule-day-header'>{_escape(_date_label(day))}</div>")
+
+        for item in grouped[day]:
+            item_class = "schedule-item hotel" if item["type"] == "hotel" else "schedule-item"
+            icon = "🏨" if item["type"] == "hotel" else ICONS.get(item.get("category", "その他"), "📝")
+            time_text = "宿泊" if item["type"] == "hotel" else item.get("time", "")
+            title = _escape(item.get("title", ""))
+            place = _escape(item.get("place", ""))
+
+            html_parts.append(f"<div class='{item_class}'>")
+            html_parts.append(f"<div><span class='schedule-time'>{_escape(time_text)}</span> {icon} {title}</div>")
+            if place:
+                html_parts.append(f"<div class='schedule-place'>📍 {place}</div>")
+            html_parts.append("</div>")
+
+        html_parts.append("</div>")
+
+    html_parts.append("</div>")
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
+
+
+def render_grouped_timeline(group_id: str, trips: list[dict], settings: dict, trip: dict):
+    grouped = group_timeline_by_date(trip)
+
+    if not grouped and not trip.get("others"):
+        st.info("まだ日程はありません。")
+        return
+
+    for day in sorted(grouped.keys()):
+        st.markdown(f"<div class='day-section-title'>📅 {_escape(_date_label(day))}</div>", unsafe_allow_html=True)
+
+        for item in grouped[day]:
+            if item["type"] == "plan":
+                render_plan_card(group_id, trips, settings, trip, item["data"])
+            elif item["type"] == "hotel":
+                render_hotel_card(group_id, trips, settings, trip, item["data"])
+
+    if trip.get("others"):
+        st.markdown("<div class='day-section-title'>📝 日付なし・その他費用</div>", unsafe_allow_html=True)
+        for o in trip.get("others", []):
+            render_other_card(group_id, trips, settings, trip, o)
+
 # ------------------------- tabs -------------------------
 
 def tab_schedule(group_id: str, trips: list[dict], settings: dict, trip: dict):
@@ -346,46 +477,11 @@ def tab_schedule(group_id: str, trips: list[dict], settings: dict, trip: dict):
             trip["others"].append({"id":new_id(), "content":content, "category":cat, "amount":int(amount), "memo":memo})
             save_current(group_id, trips, settings); st.rerun()
 
+    st.subheader("日付別スケジュール表")
+    render_schedule_board(trip)
+
     st.subheader("タイムライン")
-    timeline_items = []
-
-    for p in trip.get("plans", []):
-        timeline_items.append({
-            "type": "plan",
-            "date": p.get("date", ""),
-            "time": p.get("time", ""),
-            "sort_time": p.get("time", "99:98"),
-            "data": p,
-        })
-
-    for h in trip.get("hotels", []):
-        timeline_items.append({
-            "type": "hotel",
-            "date": h.get("date", ""),
-            "time": "",
-            "sort_time": "99:99",  # 同じ日の最後に宿泊を置く
-            "data": h,
-        })
-
-    timeline_items = sorted(
-        timeline_items,
-        key=lambda x: (
-            x["date"] or "9999-99-99",
-            x["sort_time"] or "99:98",
-        )
-    )
-
-    if not timeline_items and not trip.get("others"):
-        st.info("まだ日程はありません。")
-
-    for item in timeline_items:
-        if item["type"] == "plan":
-            render_plan_card(group_id, trips, settings, trip, item["data"])
-        elif item["type"] == "hotel":
-            render_hotel_card(group_id, trips, settings, trip, item["data"])
-
-    for o in trip.get("others", []):
-        render_other_card(group_id, trips, settings, trip, o)
+    render_grouped_timeline(group_id, trips, settings, trip)
 
 
 def tab_packing(group_id: str, trips: list[dict], settings: dict, trip: dict):
