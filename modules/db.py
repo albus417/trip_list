@@ -54,28 +54,45 @@ def create_group(name: str) -> str:
 
 def join_group(invite_code: str) -> str | None:
     sb = get_supabase_client()
+    uid = current_user_id()
     code = (invite_code or "").strip().upper()
 
-    if not code:
+    if not code or not uid:
         return None
 
-    try:
-        result = sb.rpc(
-            "join_trip_group_by_invite",
-            {"p_invite_code": code}
-        ).execute()
+    groups = (
+        sb.table("trip_groups")
+        .select("id,name")
+        .eq("invite_code", code)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
 
-        st.write("RPC result:", result.data)
-
-        if not result.data:
-            return None
-
-        return result.data
-
-    except Exception as e:
-        st.error("join_groupでエラーが出ています")
-        st.exception(e)
+    if not groups:
         return None
+
+    group_id = groups[0]["id"]
+
+    existing = (
+        sb.table("trip_group_members")
+        .select("group_id")
+        .eq("group_id", group_id)
+        .eq("user_id", uid)
+        .execute()
+        .data
+        or []
+    )
+
+    if not existing:
+        sb.table("trip_group_members").insert({
+            "group_id": group_id,
+            "user_id": uid,
+            "role": "member",
+        }).execute()
+
+    return group_id
 
 def get_group_data(group_id: str) -> dict:
     sb = get_supabase_client()
