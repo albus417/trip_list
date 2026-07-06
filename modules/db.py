@@ -6,7 +6,7 @@ from .config import get_supabase_client, DEFAULT_SETTINGS
 from .utils import make_invite_code, now_iso
 
 def get_authed_supabase_client():
-    sb = get_authed_supabase_client()
+    sb = get_supabase_client()
     token = st.session_state.get("access_token")
 
     if token:
