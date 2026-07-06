@@ -38,6 +38,84 @@ CATEGORY_ICONS = {
     "その他": "他",
 }
 
+PDF_PLACE_TO_PREFECTURE = {
+    "別府": "大分県", "由布院": "大分県", "湯布院": "大分県", "佐伯": "大分県", "大分": "大分県",
+    "福岡": "福岡県", "博多": "福岡県", "天神": "福岡県",
+    "長崎": "長崎県", "佐世保": "長崎県", "ハウステンボス": "長崎県",
+    "大阪": "大阪府", "USJ": "大阪府", "ユニバ": "大阪府", "梅田": "大阪府", "難波": "大阪府",
+    "京都": "京都府", "奈良": "奈良県", "神戸": "兵庫県",
+    "東京": "東京都", "新宿": "東京都", "渋谷": "東京都", "羽田": "東京都",
+    "横浜": "神奈川県", "箱根": "神奈川県", "鎌倉": "神奈川県",
+    "名古屋": "愛知県", "ジブリパーク": "愛知県",
+    "伊勢": "三重県", "志摩": "三重県", "鳥羽": "三重県", "地中海村": "三重県",
+    "静岡": "静岡県", "熱海": "静岡県", "伊豆": "静岡県", "熱川": "静岡県",
+    "札幌": "北海道", "沖縄": "沖縄県", "那覇": "沖縄県",
+}
+
+PDF_PREFECTURES = [
+    "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
+    "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
+    "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県",
+    "岐阜県", "静岡県", "愛知県", "三重県",
+    "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
+    "鳥取県", "島根県", "岡山県", "広島県", "山口県",
+    "徳島県", "香川県", "愛媛県", "高知県",
+    "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県",
+]
+
+
+def _collect_places_for_stats(trip: dict) -> list[str]:
+    places = []
+    for p in trip.get("plans", []):
+        if p.get("place"):
+            places.append(str(p.get("place")))
+    for h in trip.get("hotels", []):
+        if h.get("place"):
+            places.append(str(h.get("place")))
+        if h.get("hotel"):
+            places.append(str(h.get("hotel")))
+    return places
+
+
+def _detect_pdf_prefecture(place: str, settings: dict | None = None) -> str | None:
+    settings = settings or {}
+    overrides = settings.get("place_prefecture_overrides", {}) or {}
+    place = (place or "").strip()
+
+    if place in overrides and overrides[place] in PDF_PREFECTURES:
+        return overrides[place]
+
+    for pref in PDF_PREFECTURES:
+        if pref in place:
+            return pref
+
+    for key, pref in sorted(PDF_PLACE_TO_PREFECTURE.items(), key=lambda x: len(x[0]), reverse=True):
+        if key in place:
+            return pref
+
+    return None
+
+
+def _all_travel_stats(all_trips: list[dict] | None, settings: dict | None = None) -> dict:
+    all_trips = all_trips or []
+    prefs = set()
+    hotels = 0
+
+    for t in all_trips:
+        hotels += len(t.get("hotels", []))
+        for place in _collect_places_for_stats(t):
+            pref = _detect_pdf_prefecture(place, settings)
+            if pref:
+                prefs.add(pref)
+
+    ordered = [p for p in PDF_PREFECTURES if p in prefs]
+    return {
+        "trip_count": len(all_trips),
+        "pref_count": len(ordered),
+        "prefectures": ordered,
+        "hotel_count": hotels,
+    }
+
 
 def _date_obj(value: str):
     try:
@@ -260,7 +338,7 @@ def _card_table(title: str, lines: list[str], styles, width=230) -> Table:
     return t
 
 
-def _cover_page(story, trip: dict, settings: dict, styles):
+def _cover_page(story, trip: dict, settings: dict, styles, all_trips: list[dict] | None = None):
     title = trip.get("title") or "無題の旅行"
     app_title = settings.get("app_title", "TripList") if isinstance(settings, dict) else str(settings or "TripList")
     members = settings.get("members", []) if isinstance(settings, dict) else []
@@ -291,10 +369,14 @@ def _cover_page(story, trip: dict, settings: dict, styles):
         except Exception:
             pass
 
+    stats = _all_travel_stats(all_trips, settings)
     budget_lines = [
         f"・合計：{_money(total)}",
         f"・1人あたり：{_money(total // people)}",
         f"・人数：{people}人",
+        f"・旅行回数：{stats['trip_count']}回",
+        f"・行った都道府県：{stats['pref_count']}都道府県",
+        f"・総宿泊数：{stats['hotel_count']}泊",
     ]
 
     hotel_lines = []
@@ -314,6 +396,12 @@ def _cover_page(story, trip: dict, settings: dict, styles):
 
     if hotel_lines:
         story.append(_card_table("ホテル", hotel_lines, styles, width=725))
+        story.append(Spacer(1, 10))
+
+    stats = _all_travel_stats(all_trips, settings)
+    if stats.get("prefectures"):
+        pref_lines = ["・" + "、".join(stats["prefectures"])]
+        story.append(_card_table("行った都道府県", pref_lines, styles, width=725))
         story.append(Spacer(1, 10))
 
     story.append(Paragraph("素敵な旅になりますように。", styles["CoverSub"]))
@@ -477,7 +565,7 @@ def _draw_page_frame(canvas, doc):
     canvas.restoreState()
 
 
-def make_pdf(trip: dict, settings=None) -> BytesIO:
+def make_pdf(trip: dict, settings=None, all_trips: list[dict] | None = None) -> BytesIO:
     """旅行のしおりPDFを作る。QR・写真なし版。"""
     pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
 
@@ -499,7 +587,7 @@ def make_pdf(trip: dict, settings=None) -> BytesIO:
     styles = _make_styles()
 
     story = []
-    _cover_page(story, trip, settings, styles)
+    _cover_page(story, trip, settings, styles, all_trips)
     _schedule_board_page(story, trip, styles)
     _details_pages(story, trip, settings, styles)
 
