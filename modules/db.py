@@ -53,22 +53,21 @@ def create_group(name: str) -> str:
 
 
 def join_group(invite_code: str) -> str | None:
-    """Join a group by invite code only."""
     sb = get_supabase_client()
-    uid = current_user_id()
     code = (invite_code or "").strip().upper()
-    groups = sb.table("trip_groups").select("id,name").eq("invite_code", code).limit(1).execute().data or []
-    if not groups:
+
+    if not code:
         return None
-    group_id = groups[0]["id"]
-    existing = sb.table("trip_group_members").select("group_id").eq("group_id", group_id).eq("user_id", uid).execute().data or []
-    if not existing:
-        sb.table("trip_group_members").insert({
-            "group_id": group_id,
-            "user_id": uid,
-            "role": "member",
-        }).execute()
-    return group_id
+
+    result = sb.rpc(
+        "join_trip_group_by_invite",
+        {"p_invite_code": code}
+    ).execute()
+
+    if not result.data:
+        return None
+
+    return result.data
 
 
 def get_group_data(group_id: str) -> dict:
