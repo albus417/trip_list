@@ -69,13 +69,97 @@ h1, h2, h3 { color: #735343; }
 .small-muted { color: #7d6b61; font-size: 0.92rem; }
 .big-title { text-align:center; font-size: 3.0rem; color: #735343; font-weight: 800; margin-bottom: 0.2rem; }
 .subtitle { text-align:center; color:#7d6b61; margin-bottom: 1.5rem; }
-.schedule-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 12px 0 24px 0; }
-.schedule-day { background: rgba(255,255,255,0.94); border: 1px solid #ead7c5; border-radius: 16px; padding: 12px; box-shadow: 0 6px 16px rgba(120,80,60,0.08); min-height: 180px; }
-.schedule-day-header { font-weight: 800; color: #735343; border-bottom: 1px solid #ead7c5; padding-bottom: 8px; margin-bottom: 10px; }
-.schedule-item { background: #fff7f0; border-left: 5px solid #C8A97E; border-radius: 10px; padding: 8px 9px; margin: 8px 0; font-size: 0.92rem; }
-.schedule-item.hotel { background: #f1f7ff; border-left-color: #7aa7d9; }
-.schedule-time { font-weight: 800; color: #735343; }
-.schedule-place { color: #7d6b61; font-size: 0.84rem; margin-top: 2px; }
+.booklet-hero {
+    background: rgba(255,255,255,0.92);
+    border: 1px solid #ead7c5;
+    border-radius: 22px;
+    padding: 22px 24px;
+    margin: 14px 0 18px 0;
+    box-shadow: 0 10px 26px rgba(120,80,60,0.10);
+}
+.booklet-title { font-size: 2.0rem; font-weight: 900; color: #5f3f2f; margin-bottom: 4px; }
+.booklet-sub { color: #7d6b61; font-size: 1.0rem; margin-bottom: 12px; }
+.booklet-chip {
+    display: inline-block;
+    background: #f4e8da;
+    color: #735343 !important;
+    border: 1px solid #e2cdb7;
+    border-radius: 999px;
+    padding: 5px 11px;
+    margin: 4px 6px 4px 0;
+    font-size: 0.88rem;
+    font-weight: 700;
+}
+.schedule-board {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+    gap: 14px;
+    margin: 12px 0 24px 0;
+}
+.schedule-day {
+    position: relative;
+    background: linear-gradient(180deg, rgba(255,255,255,0.97), rgba(255,250,245,0.95));
+    border: 1px solid #ead7c5;
+    border-radius: 18px;
+    padding: 0 12px 12px 12px;
+    box-shadow: 0 8px 22px rgba(120,80,60,0.10);
+    min-height: 200px;
+    overflow: hidden;
+}
+.schedule-day::before {
+    content: "";
+    position: absolute;
+    left: 22px;
+    top: 54px;
+    bottom: 16px;
+    width: 2px;
+    background: #d6b58e;
+    opacity: 0.55;
+}
+.schedule-day-header {
+    position: relative;
+    background: #f4e8da;
+    margin: 0 -12px 12px -12px;
+    padding: 12px 14px;
+    color: #735343;
+    border-bottom: 1px solid #ead7c5;
+}
+.schedule-day-main { font-size: 1.35rem; font-weight: 900; }
+.schedule-day-sub { font-size: 0.82rem; color:#7d6b61; margin-top: 2px; }
+.schedule-item {
+    position: relative;
+    background: #fff7f0;
+    border: 1px solid #ead7c5;
+    border-left: 5px solid #C8A97E;
+    border-radius: 13px;
+    padding: 9px 10px 9px 12px;
+    margin: 9px 0 9px 24px;
+    font-size: 0.92rem;
+    box-shadow: 0 3px 9px rgba(120,80,60,0.06);
+}
+.schedule-item::before {
+    content: "";
+    position: absolute;
+    left: -31px;
+    top: 15px;
+    width: 11px;
+    height: 11px;
+    background: #C8A97E;
+    border-radius: 50%;
+    border: 2px solid white;
+    box-shadow: 0 0 0 1px #C8A97E;
+}
+.schedule-item.hotel {
+    background: #f1f7ff;
+    border-left-color: #7aa7d9;
+}
+.schedule-item.hotel::before {
+    background: #7aa7d9;
+    box-shadow: 0 0 0 1px #7aa7d9;
+}
+.schedule-time { font-weight: 900; color: #735343; margin-right: 6px; }
+.schedule-category { float: right; font-size: 0.78rem; color:#7d6b61; background:#fff; border-radius:999px; padding:2px 7px; border:1px solid #ead7c5; }
+.schedule-place { color: #7d6b61; font-size: 0.84rem; margin-top: 3px; }
 .day-section-title { background: #fff; border: 1px solid #ead7c5; border-radius: 14px; padding: 10px 14px; margin: 18px 0 8px 0; font-weight: 800; color: #735343; }
 </style>
 """
@@ -372,19 +456,90 @@ def group_timeline_by_date(trip: dict) -> dict[str, list[dict]]:
     return dict(grouped)
 
 
+def _trip_dates(trip: dict) -> list[date]:
+    dates = []
+    for section in ["plans", "hotels"]:
+        for item in trip.get(section, []):
+            d = _parse_date(item.get("date", ""))
+            if d:
+                dates.append(d)
+    return sorted(dates)
+
+
+def trip_date_range_label(trip: dict) -> str:
+    dates = _trip_dates(trip)
+    if not dates:
+        return "日程未定"
+    start, end = dates[0], dates[-1]
+    if start == end:
+        return _date_label(start.isoformat())
+    return f"{_date_label(start.isoformat())} 〜 {_date_label(end.isoformat())}"
+
+
+def trip_days_count(trip: dict) -> int:
+    dates = _trip_dates(trip)
+    if not dates:
+        return 0
+    return (dates[-1] - dates[0]).days + 1
+
+
+def render_trip_booklet_header(trip: dict, settings: dict):
+    members = settings.get("members", [])
+    date_range = trip_date_range_label(trip)
+    days_count = trip_days_count(trip)
+    total = total_amount(trip)
+
+    chips = [
+        f"📅 {date_range}",
+        f"🗓️ {days_count}日間" if days_count else "🗓️ 日数未定",
+        f"💴 合計 {total:,}円",
+    ]
+    if members:
+        chips.append("👥 " + "・".join(members))
+
+    if settings.get("anniversary_date"):
+        try:
+            d = datetime.fromisoformat(settings["anniversary_date"]).date()
+            chips.append(f"🌷 {settings.get('anniversary_name','記念日')}から {(date.today() - d).days}日")
+        except Exception:
+            pass
+
+    chip_html = "".join(f"<span class='booklet-chip'>{_escape(x)}</span>" for x in chips)
+    st.markdown(
+        f"""
+        <div class='booklet-hero'>
+            <div class='booklet-title'>📖 {_escape(trip.get('title', '無題の旅行'))}</div>
+            <div class='booklet-sub'>旅行のしおりとして、そのままPDFにできます。</div>
+            <div>{chip_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_schedule_board(trip: dict):
-    """写真の週間バーチカル手帳に近い、日付ごとの見やすいボード表示。"""
+    """手帳風の日付別タイムラインを表示する。"""
     grouped = group_timeline_by_date(trip)
 
     if not grouped:
-        st.info("予定や宿泊を追加すると、ここに日付別のスケジュール表が表示されます。")
+        st.info("予定や宿泊を追加すると、ここに手帳風のスケジュール表が表示されます。")
         return
 
+    sorted_days = sorted(grouped.keys() or [""])
     html_parts = ["<div class='schedule-board'>"]
 
-    for day in sorted(grouped.keys() or [""]):
+    for idx, day in enumerate(sorted_days, start=1):
+        label = _date_label(day)
+        day_title = label
+        day_sub = f"{idx}日目"
+
         html_parts.append("<div class='schedule-day'>")
-        html_parts.append(f"<div class='schedule-day-header'>{_escape(_date_label(day))}</div>")
+        html_parts.append(
+            f"<div class='schedule-day-header'>"
+            f"<div class='schedule-day-main'>{_escape(day_title)}</div>"
+            f"<div class='schedule-day-sub'>{_escape(day_sub)}</div>"
+            f"</div>"
+        )
 
         for item in grouped[day]:
             item_class = "schedule-item hotel" if item["type"] == "hotel" else "schedule-item"
@@ -392,9 +547,13 @@ def render_schedule_board(trip: dict):
             time_text = "宿泊" if item["type"] == "hotel" else item.get("time", "")
             title = _escape(item.get("title", ""))
             place = _escape(item.get("place", ""))
+            category = "宿泊" if item["type"] == "hotel" else _escape(item.get("category", "その他"))
 
             html_parts.append(f"<div class='{item_class}'>")
-            html_parts.append(f"<div><span class='schedule-time'>{_escape(time_text)}</span> {icon} {title}</div>")
+            html_parts.append(
+                f"<div><span class='schedule-time'>{_escape(time_text)}</span>"
+                f"{icon} {title}<span class='schedule-category'>{category}</span></div>"
+            )
             if place:
                 html_parts.append(f"<div class='schedule-place'>📍 {place}</div>")
             html_parts.append("</div>")
@@ -403,7 +562,6 @@ def render_schedule_board(trip: dict):
 
     html_parts.append("</div>")
     st.markdown("".join(html_parts), unsafe_allow_html=True)
-
 
 def render_grouped_timeline(group_id: str, trips: list[dict], settings: dict, trip: dict):
     grouped = group_timeline_by_date(trip)
@@ -473,7 +631,7 @@ def tab_schedule(group_id: str, trips: list[dict], settings: dict, trip: dict):
             trip["others"].append({"id":new_id(), "content":content, "category":cat, "amount":int(amount), "memo":memo})
             save_current(group_id, trips, settings); st.rerun()
 
-    st.subheader("日付別スケジュール表")
+    st.subheader("手帳風タイムライン")
     render_schedule_board(trip)
 
     st.subheader("タイムライン")
@@ -581,6 +739,8 @@ def render_selected_trip(group_id: str, trips: list[dict], settings: dict):
         return
     trip = normalize_trip(trips[idx])
 
+    render_trip_booklet_header(trip, settings)
+
     col_title, col_pdf, col_delete = st.columns([5,1,1])
     with col_title:
         new_title = st.text_input("旅行タイトル", value=trip.get("title", ""), key=f"title_{trip['id']}")
@@ -588,7 +748,7 @@ def render_selected_trip(group_id: str, trips: list[dict], settings: dict):
             trip["title"] = new_title
             save_current(group_id, trips, settings)
     with col_pdf:
-        pdf = make_pdf(trip, settings.get("app_title", "TripList"))
+        pdf = make_pdf(trip, settings)
         st.download_button("PDF", data=pdf, file_name=f"{safe_filename(trip.get('title'))}.pdf", mime="application/pdf")
     with col_delete:
         if st.button("旅行削除", type="secondary"):
