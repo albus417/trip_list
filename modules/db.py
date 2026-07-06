@@ -69,7 +69,6 @@ def join_group(invite_code: str) -> str | None:
 
     return result.data
 
-
 def get_group_data(group_id: str) -> dict:
     sb = get_supabase_client()
     rows = sb.table("trip_group_data").select("trips,settings,updated_at").eq("group_id", group_id).limit(1).execute().data or []
