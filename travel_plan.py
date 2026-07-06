@@ -90,10 +90,6 @@ DEFAULT_PACKING = ["財布", "スマホ", "充電器", "モバイルバッテリ
 def normalize_trip(trip: dict) -> dict:
     trip.setdefault("id", new_id())
     trip.setdefault("title", "無題の旅行")
-    trip.setdefault("participants", [])
-    trip.setdefault("anniversary_name", "")
-    trip.setdefault("anniversary_date", "")
-    trip.setdefault("use_anniversary", False)
     trip.setdefault("plans", [])
     trip.setdefault("hotels", [])
     trip.setdefault("others", [])
@@ -516,7 +512,7 @@ def tab_packing(group_id: str, trips: list[dict], settings: dict, trip: dict):
 def tab_cost(group_id: str, trips: list[dict], settings: dict, trip: dict):
     st.subheader("費用")
     total = total_amount(trip)
-    people = max(1, len(trip.get("participants", [])) or 2)
+    people = max(1, len(settings.get("members", [])) or 2)
     people = st.number_input("割り勘人数", min_value=1, value=people)
     c1, c2 = st.columns(2)
     c1.metric("合計", f"{total:,}円")
@@ -598,22 +594,6 @@ def render_selected_trip(group_id: str, trips: list[dict], settings: dict):
         if st.button("旅行削除", type="secondary"):
             trips.pop(idx); save_current(group_id, trips, settings); st.session_state.pop("selected_trip_id", None); st.rerun()
 
-    with st.expander("参加者・記念日設定"):
-        participants_text = st.text_input("参加者（カンマ区切り）", value=", ".join(trip.get("participants", [])))
-        use_anniv = st.checkbox("記念日を使う", value=bool(trip.get("use_anniversary", False)))
-        anniv_name = st.text_input("記念日の表示名", value=trip.get("anniversary_name", ""))
-        anniv_date = st.date_input("記念日", value=datetime.fromisoformat(trip.get("anniversary_date") or today_iso()).date())
-        if st.button("設定を保存"):
-            trip["participants"] = [x.strip() for x in participants_text.split(",") if x.strip()]
-            trip["use_anniversary"] = use_anniv
-            trip["anniversary_name"] = anniv_name
-            trip["anniversary_date"] = anniv_date.isoformat()
-            save_current(group_id, trips, settings); st.rerun()
-        if trip.get("use_anniversary") and trip.get("anniversary_date"):
-            d = datetime.fromisoformat(trip["anniversary_date"]).date()
-            days = (date.today() - d).days
-            st.success(f"{trip.get('anniversary_name','記念日')}から {days} 日")
-
     tabs = st.tabs(["📅 日程", "🎒 持ち物", "💴 費用", "🌤️ 天気", "📸 写真"])
     with tabs[0]: tab_schedule(group_id, trips, settings, trip)
     with tabs[1]: tab_packing(group_id, trips, settings, trip)
@@ -642,14 +622,39 @@ def main():
     data = get_group_data(group_id)
     trips = [normalize_trip(t) for t in data.get("trips", [])]
     settings = data.get("settings") or DEFAULT_SETTINGS
+    if settings.get("anniversary_date"):
+    d = datetime.fromisoformat(settings["anniversary_date"]).date()
+    days = (date.today() - d).days
+    st.success(f"{settings.get('anniversary_name', '記念日')}から {days} 日")
 
-    with st.sidebar.expander("アプリ設定"):
+    with st.sidebar.expander("グループ設定"):
         app_title = st.text_input("アプリタイトル", value=settings.get("app_title", "TripList"))
         note = st.text_input("説明", value=settings.get("theme_note", ""))
+
+        members_text = st.text_input(
+            "メンバー（カンマ区切り）",
+            value=", ".join(settings.get("members", []))
+        )
+
+        anniversary_name = st.text_input(
+            "記念日の名前",
+            value=settings.get("anniversary_name", "付き合った記念日")
+        )
+
+        anniversary_date = st.date_input(
+            "記念日",
+            value=datetime.fromisoformat(settings.get("anniversary_date") or today_iso()).date()
+        )
+
         if st.button("設定保存"):
             settings["app_title"] = app_title
             settings["theme_note"] = note
-            save_current(group_id, trips, settings); st.rerun()
+            settings["members"] = [x.strip() for x in members_text.split(",") if x.strip()]
+            settings["anniversary_name"] = anniversary_name
+            settings["anniversary_date"] = anniversary_date.isoformat()
+
+            save_current(group_id, trips, settings)
+            st.rerun()
 
     with st.sidebar.expander("メンバー"):
         members = get_members(group_id)
