@@ -59,15 +59,23 @@ def join_group(invite_code: str) -> str | None:
     if not code:
         return None
 
-    result = sb.rpc(
-        "join_trip_group_by_invite",
-        {"p_invite_code": code}
-    ).execute()
+    try:
+        result = sb.rpc(
+            "join_trip_group_by_invite",
+            {"p_invite_code": code}
+        ).execute()
 
-    if not result.data:
+        st.write("RPC result:", result.data)
+
+        if not result.data:
+            return None
+
+        return result.data
+
+    except Exception as e:
+        st.error("join_groupでエラーが出ています")
+        st.exception(e)
         return None
-
-    return result.data
 
 def get_group_data(group_id: str) -> dict:
     sb = get_supabase_client()
