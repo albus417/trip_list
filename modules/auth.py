@@ -29,11 +29,14 @@ def get_supabase_client():
     return create_client(url, key)
 
 
-@st.cache_resource
 def get_cookie_controller():
     if CookieController is None:
         return None
-    return CookieController()
+
+    if "cookie_controller" not in st.session_state:
+        st.session_state["cookie_controller"] = CookieController()
+
+    return st.session_state["cookie_controller"]
 
 
 def _normalize_email(email: str) -> str:
