@@ -69,13 +69,86 @@ h1, h2, h3 { color: #735343; }
 .small-muted { color: #7d6b61; font-size: 0.92rem; }
 .big-title { text-align:center; font-size: 3.0rem; color: #735343; font-weight: 800; margin-bottom: 0.2rem; }
 .subtitle { text-align:center; color:#7d6b61; margin-bottom: 1.5rem; }
-.schedule-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 12px 0 24px 0; }
-.schedule-day { background: rgba(255,255,255,0.94); border: 1px solid #ead7c5; border-radius: 16px; padding: 12px; box-shadow: 0 6px 16px rgba(120,80,60,0.08); min-height: 180px; }
-.schedule-day-header { font-weight: 800; color: #735343; border-bottom: 1px solid #ead7c5; padding-bottom: 8px; margin-bottom: 10px; }
-.schedule-item { background: #fff7f0; border-left: 5px solid #C8A97E; border-radius: 10px; padding: 8px 9px; margin: 8px 0; font-size: 0.92rem; }
+.booklet-hero {
+    background: rgba(255,255,255,0.92);
+    border: 1px solid #ead7c5;
+    border-radius: 22px;
+    padding: 22px 24px;
+    margin: 14px 0 18px 0;
+    box-shadow: 0 10px 26px rgba(120,80,60,0.10);
+}
+.booklet-title { font-size: 2.0rem; font-weight: 900; color: #5f3f2f; margin-bottom: 4px; }
+.booklet-sub { color: #7d6b61; font-size: 1.0rem; margin-bottom: 12px; }
+.booklet-chip {
+    display: inline-block;
+    background: #f4e8da;
+    color: #735343 !important;
+    border: 1px solid #e2cdb7;
+    border-radius: 999px;
+    padding: 5px 11px;
+    margin: 4px 6px 4px 0;
+    font-size: 0.88rem;
+    font-weight: 700;
+}
+.schedule-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 14px; margin: 12px 0 24px 0; }
+.schedule-day {
+    position: relative;
+    background: linear-gradient(180deg, rgba(255,255,255,0.97), rgba(255,250,245,0.95));
+    border: 1px solid #ead7c5;
+    border-radius: 18px;
+    padding: 0 12px 12px 12px;
+    box-shadow: 0 8px 22px rgba(120,80,60,0.10);
+    min-height: 200px;
+    overflow: hidden;
+}
+.schedule-day::before {
+    content: "";
+    position: absolute;
+    left: 22px;
+    top: 54px;
+    bottom: 16px;
+    width: 2px;
+    background: #d6b58e;
+    opacity: 0.55;
+}
+.schedule-day-header {
+    position: relative;
+    background: #f4e8da;
+    margin: 0 -12px 12px -12px;
+    padding: 12px 14px;
+    color: #735343;
+    border-bottom: 1px solid #ead7c5;
+}
+.schedule-day-main { font-size: 1.35rem; font-weight: 900; }
+.schedule-day-sub { font-size: 0.82rem; color:#7d6b61; margin-top: 2px; }
+.schedule-item {
+    position: relative;
+    background: #fff7f0;
+    border: 1px solid #ead7c5;
+    border-left: 5px solid #C8A97E;
+    border-radius: 13px;
+    padding: 9px 10px 9px 12px;
+    margin: 9px 0 9px 24px;
+    font-size: 0.92rem;
+    box-shadow: 0 3px 9px rgba(120,80,60,0.06);
+}
+.schedule-item::before {
+    content: "";
+    position: absolute;
+    left: -31px;
+    top: 15px;
+    width: 11px;
+    height: 11px;
+    background: #C8A97E;
+    border-radius: 50%;
+    border: 2px solid white;
+    box-shadow: 0 0 0 1px #C8A97E;
+}
 .schedule-item.hotel { background: #f1f7ff; border-left-color: #7aa7d9; }
-.schedule-time { font-weight: 800; color: #735343; }
-.schedule-place { color: #7d6b61; font-size: 0.84rem; margin-top: 2px; }
+.schedule-item.hotel::before { background: #7aa7d9; box-shadow: 0 0 0 1px #7aa7d9; }
+.schedule-time { font-weight: 900; color: #735343; margin-right: 6px; }
+.schedule-category { float: right; font-size: 0.78rem; color:#7d6b61; background:#fff; border-radius:999px; padding:2px 7px; border:1px solid #ead7c5; }
+.schedule-place { color: #7d6b61; font-size: 0.84rem; margin-top: 3px; }
 .day-section-title { background: #fff; border: 1px solid #ead7c5; border-radius: 14px; padding: 10px 14px; margin: 18px 0 8px 0; font-weight: 800; color: #735343; }
 </style>
 """
@@ -262,8 +335,10 @@ def render_plan_card(group_id: str, trips: list[dict], settings: dict, trip: dic
 
 def render_hotel_card(group_id: str, trips: list[dict], settings: dict, trip: dict, h: dict):
     with st.container(border=True):
+        checkout_text = f" → {h.get('checkout')}" if h.get("checkout") else ""
+        nights = hotel_nights(h)
         st.markdown(f"### 🏨 {h.get('hotel','宿泊')}")
-        st.write(f"📅 {h.get('date','')}　📍 {h.get('place','')}　💰 {yen(h.get('amount')):,}円")
+        st.write(f"📅 {h.get('date','')}{checkout_text}（{nights}泊）　📍 {h.get('place','')}　💰 {yen(h.get('amount')):,}円")
         if h.get("memo"): st.caption(h.get("memo"))
         cols = st.columns([1,1,6])
         if h.get("place"):
@@ -272,14 +347,16 @@ def render_hotel_card(group_id: str, trips: list[dict], settings: dict, trip: di
             st.session_state[f"editing_hotel_{h['id']}"] = not st.session_state.get(f"editing_hotel_{h['id']}", False)
         if st.session_state.get(f"editing_hotel_{h['id']}", False):
             with st.form(f"form_hotel_{h['id']}"):
-                d = st.date_input("宿泊日", value=datetime.fromisoformat(h.get("date") or today_iso()).date())
+                d = st.date_input("チェックイン日", value=datetime.fromisoformat(h.get("date") or today_iso()).date())
+                checkout_default = datetime.fromisoformat(h.get("checkout") or h.get("date") or today_iso()).date()
+                checkout = st.date_input("チェックアウト日", value=checkout_default)
                 hotel = st.text_input("宿泊施設", value=h.get("hotel", ""))
                 place = st.text_input("場所", value=h.get("place", ""))
                 amount = st.number_input("金額", min_value=0, step=100, value=yen(h.get("amount")))
                 memo = st.text_area("メモ", value=h.get("memo", ""))
                 c1, c2 = st.columns(2)
                 if c1.form_submit_button("保存"):
-                    h.update({"date": d.isoformat(), "hotel": hotel, "place": place, "amount": int(amount), "memo": memo})
+                    h.update({"date": d.isoformat(), "checkout": checkout.isoformat(), "hotel": hotel, "place": place, "amount": int(amount), "memo": memo})
                     save_current(group_id, trips, settings); st.session_state[f"editing_hotel_{h['id']}"] = False; st.rerun()
                 if c2.form_submit_button("削除"):
                     delete_item(trip["hotels"], h["id"]); save_current(group_id, trips, settings); st.rerun()
@@ -372,19 +449,108 @@ def group_timeline_by_date(trip: dict) -> dict[str, list[dict]]:
     return dict(grouped)
 
 
+def _trip_dates(trip: dict) -> list[date]:
+    dates = []
+    for section in ["plans", "hotels"]:
+        for item in trip.get(section, []):
+            d = _parse_date(item.get("date", ""))
+            if d:
+                dates.append(d)
+        # checkoutも日程範囲には含める
+        for item in trip.get("hotels", []):
+            d = _parse_date(item.get("checkout", ""))
+            if d:
+                dates.append(d)
+    return sorted(dates)
+
+
+def trip_date_range_label(trip: dict) -> str:
+    dates = _trip_dates(trip)
+    if not dates:
+        return "日程未定"
+    start, end = dates[0], dates[-1]
+    if start == end:
+        return _date_label(start.isoformat())
+    return f"{_date_label(start.isoformat())} 〜 {_date_label(end.isoformat())}"
+
+
+def trip_days_count(trip: dict) -> int:
+    dates = _trip_dates(trip)
+    if not dates:
+        return 0
+    return (dates[-1] - dates[0]).days + 1
+
+
+def hotel_nights(hotel: dict) -> int:
+    checkin = _parse_date(hotel.get("date", ""))
+    checkout = _parse_date(hotel.get("checkout", ""))
+    if checkin and checkout and checkout > checkin:
+        return (checkout - checkin).days
+    return 1
+
+
+def total_nights(trips: list[dict]) -> int:
+    return sum(hotel_nights(h) for trip in trips for h in trip.get("hotels", []))
+
+
+def render_trip_booklet_header(trip: dict, settings: dict, all_trips: list[dict] | None = None):
+    all_trips = all_trips or [trip]
+    members = settings.get("members", [])
+    date_range = trip_date_range_label(trip)
+    days_count = trip_days_count(trip)
+    total = total_amount(trip)
+
+    chips = [
+        f"📅 {date_range}",
+        f"🗓️ {days_count}日間" if days_count else "🗓️ 日数未定",
+        f"💴 合計 {total:,}円",
+        f"🏨 総宿泊数 {total_nights(all_trips)}泊",
+    ]
+    if members:
+        chips.append("👥 " + "・".join(members))
+
+    if settings.get("anniversary_date"):
+        try:
+            d = datetime.fromisoformat(settings["anniversary_date"]).date()
+            chips.append(f"🌷 {settings.get('anniversary_name','記念日')}から {(date.today() - d).days}日")
+        except Exception:
+            pass
+
+    chip_html = "".join(f"<span class='booklet-chip'>{_escape(x)}</span>" for x in chips)
+    st.markdown(
+        f"""
+        <div class='booklet-hero'>
+            <div class='booklet-title'>📖 {_escape(trip.get('title', '無題の旅行'))}</div>
+            <div class='booklet-sub'>旅行のしおりとして、そのままPDFにできます。</div>
+            <div>{chip_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_schedule_board(trip: dict):
-    """写真の週間バーチカル手帳に近い、日付ごとの見やすいボード表示。"""
+    """手帳風の日付別タイムラインを表示する。"""
     grouped = group_timeline_by_date(trip)
 
     if not grouped:
-        st.info("予定や宿泊を追加すると、ここに日付別のスケジュール表が表示されます。")
+        st.info("予定や宿泊を追加すると、ここに手帳風のスケジュール表が表示されます。")
         return
 
+    sorted_days = sorted(grouped.keys() or [""])
     html_parts = ["<div class='schedule-board'>"]
 
-    for day in sorted(grouped.keys() or [""]):
+    for idx, day in enumerate(sorted_days, start=1):
+        label = _date_label(day)
+        day_sub = f"{idx}日目"
+
         html_parts.append("<div class='schedule-day'>")
-        html_parts.append(f"<div class='schedule-day-header'>{_escape(_date_label(day))}</div>")
+        html_parts.append(
+            f"<div class='schedule-day-header'>"
+            f"<div class='schedule-day-main'>{_escape(label)}</div>"
+            f"<div class='schedule-day-sub'>{_escape(day_sub)}</div>"
+            f"</div>"
+        )
 
         for item in grouped[day]:
             item_class = "schedule-item hotel" if item["type"] == "hotel" else "schedule-item"
@@ -392,18 +558,24 @@ def render_schedule_board(trip: dict):
             time_text = "宿泊" if item["type"] == "hotel" else item.get("time", "")
             title = _escape(item.get("title", ""))
             place = _escape(item.get("place", ""))
+            category = "宿泊" if item["type"] == "hotel" else _escape(item.get("category", "その他"))
 
             html_parts.append(f"<div class='{item_class}'>")
-            html_parts.append(f"<div><span class='schedule-time'>{_escape(time_text)}</span> {icon} {title}</div>")
+            html_parts.append(
+                f"<div><span class='schedule-time'>{_escape(time_text)}</span>"
+                f"{icon} {title}<span class='schedule-category'>{category}</span></div>"
+            )
             if place:
                 html_parts.append(f"<div class='schedule-place'>📍 {place}</div>")
+            if item["type"] == "hotel" and item["data"].get("checkout"):
+                nights = hotel_nights(item["data"])
+                html_parts.append(f"<div class='schedule-place'>🛎️ チェックアウト：{_escape(item['data'].get('checkout'))}（{nights}泊）</div>")
             html_parts.append("</div>")
 
         html_parts.append("</div>")
 
     html_parts.append("</div>")
     st.markdown("".join(html_parts), unsafe_allow_html=True)
-
 
 def render_grouped_timeline(group_id: str, trips: list[dict], settings: dict, trip: dict):
     grouped = group_timeline_by_date(trip)
@@ -453,13 +625,14 @@ def tab_schedule(group_id: str, trips: list[dict], settings: dict, trip: dict):
 
     st.subheader("宿泊を追加")
     with st.form("add_hotel_form", clear_on_submit=True):
-        d = st.date_input("宿泊日", value=st.session_state["last_hotel_date"], key="hotel_add_date")
+        d = st.date_input("チェックイン日", value=st.session_state["last_hotel_date"], key="hotel_add_date")
+        checkout = st.date_input("チェックアウト日", value=st.session_state["last_hotel_date"], key="hotel_checkout_add_date")
         hotel = st.text_input("宿泊施設")
         place = st.text_input("宿泊場所")
         amount = st.number_input("宿泊金額", min_value=0, step=100)
         memo = st.text_area("宿泊メモ")
         if st.form_submit_button("宿泊を追加"):
-            trip["hotels"].append({"id":new_id(), "date":d.isoformat(), "hotel":hotel, "place":place, "amount":int(amount), "memo":memo})
+            trip["hotels"].append({"id":new_id(), "date":d.isoformat(), "checkout":checkout.isoformat(), "hotel":hotel, "place":place, "amount":int(amount), "memo":memo})
             st.session_state["last_hotel_date"] = d
             save_current(group_id, trips, settings); st.rerun()
 
@@ -473,7 +646,7 @@ def tab_schedule(group_id: str, trips: list[dict], settings: dict, trip: dict):
             trip["others"].append({"id":new_id(), "content":content, "category":cat, "amount":int(amount), "memo":memo})
             save_current(group_id, trips, settings); st.rerun()
 
-    st.subheader("日付別スケジュール表")
+    st.subheader("手帳風タイムライン")
     render_schedule_board(trip)
 
     st.subheader("タイムライン")
@@ -586,67 +759,24 @@ PREFECTURES = [
     "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県",
 ]
 
-# よく出る市区町村・観光地・駅名の簡易辞書。
-# 完全な住所辞書ではないため、未判定の地名は下の「地名補正」で追加できます。
 PLACE_TO_PREFECTURE = {
-    # 北海道・東北
-    "札幌": "北海道", "小樽": "北海道", "函館": "北海道", "旭川": "北海道", "富良野": "北海道", "美瑛": "北海道", "新千歳": "北海道",
-    "青森": "青森県", "弘前": "青森県", "八戸": "青森県",
-    "盛岡": "岩手県", "平泉": "岩手県", "花巻": "岩手県",
-    "仙台": "宮城県", "松島": "宮城県", "石巻": "宮城県",
-    "秋田": "秋田県", "角館": "秋田県",
-    "山形": "山形県", "蔵王": "山形県", "米沢": "山形県",
-    "福島": "福島県", "郡山": "福島県", "会津若松": "福島県", "いわき": "福島県",
-
-    # 関東
-    "水戸": "茨城県", "つくば": "茨城県", "ひたちなか": "茨城県", "大洗": "茨城県",
-    "宇都宮": "栃木県", "日光": "栃木県", "那須": "栃木県",
-    "前橋": "群馬県", "高崎": "群馬県", "草津": "群馬県", "伊香保": "群馬県",
-    "さいたま": "埼玉県", "大宮": "埼玉県", "川越": "埼玉県", "秩父": "埼玉県",
-    "千葉": "千葉県", "舞浜": "千葉県", "浦安": "千葉県", "成田": "千葉県", "木更津": "千葉県", "鴨川": "千葉県",
-    "東京": "東京都", "新宿": "東京都", "渋谷": "東京都", "池袋": "東京都", "上野": "東京都", "浅草": "東京都", "品川": "東京都", "羽田": "東京都", "東京駅": "東京都",
-    "横浜": "神奈川県", "鎌倉": "神奈川県", "江ノ島": "神奈川県", "箱根": "神奈川県", "小田原": "神奈川県", "川崎": "神奈川県",
-
-    # 中部
-    "新潟": "新潟県", "佐渡": "新潟県", "越後湯沢": "新潟県",
-    "富山": "富山県", "黒部": "富山県", "立山": "富山県",
-    "金沢": "石川県", "能登": "石川県", "加賀": "石川県",
-    "福井": "福井県", "敦賀": "福井県", "東尋坊": "福井県",
-    "甲府": "山梨県", "河口湖": "山梨県", "富士急": "山梨県", "山中湖": "山梨県",
-    "長野": "長野県", "松本": "長野県", "軽井沢": "長野県", "上高地": "長野県", "白馬": "長野県",
-    "岐阜": "岐阜県", "高山": "岐阜県", "白川郷": "岐阜県", "下呂": "岐阜県",
-    "静岡": "静岡県", "熱海": "静岡県", "伊豆": "静岡県", "熱川": "静岡県", "下田": "静岡県", "三島": "静岡県", "沼津": "静岡県", "浜松": "静岡県", "富士宮": "静岡県",
-    "名古屋": "愛知県", "栄": "愛知県", "愛知": "愛知県", "豊田": "愛知県", "犬山": "愛知県", "常滑": "愛知県", "中部国際空港": "愛知県", "ジブリパーク": "愛知県",
-    "津": "三重県", "伊勢": "三重県", "鳥羽": "三重県", "志摩": "三重県", "賢島": "三重県", "桑名": "三重県", "ナガシマ": "三重県", "地中海村": "三重県",
-
-    # 関西
-    "大津": "滋賀県", "彦根": "滋賀県", "琵琶湖": "滋賀県",
-    "京都": "京都府", "嵐山": "京都府", "祇園": "京都府", "宇治": "京都府", "伏見": "京都府",
-    "大阪": "大阪府", "梅田": "大阪府", "なんば": "大阪府", "難波": "大阪府", "心斎橋": "大阪府", "天王寺": "大阪府", "新大阪": "大阪府", "USJ": "大阪府", "ユニバ": "大阪府", "関西空港": "大阪府",
-    "神戸": "兵庫県", "姫路": "兵庫県", "有馬": "兵庫県", "淡路": "兵庫県",
-    "奈良": "奈良県", "吉野": "奈良県",
-    "和歌山": "和歌山県", "白浜": "和歌山県", "高野山": "和歌山県",
-
-    # 中国・四国
-    "鳥取": "鳥取県", "米子": "鳥取県", "境港": "鳥取県",
-    "松江": "島根県", "出雲": "島根県", "石見": "島根県",
-    "岡山": "岡山県", "倉敷": "岡山県",
-    "広島": "広島県", "宮島": "広島県", "尾道": "広島県", "福山": "広島県",
-    "山口": "山口県", "下関": "山口県", "萩": "山口県", "角島": "山口県",
-    "徳島": "徳島県", "鳴門": "徳島県",
-    "高松": "香川県", "琴平": "香川県", "小豆島": "香川県",
-    "松山": "愛媛県", "道後": "愛媛県", "今治": "愛媛県",
-    "高知": "高知県", "四万十": "高知県",
-
-    # 九州・沖縄
-    "福岡": "福岡県", "博多": "福岡県", "天神": "福岡県", "小倉": "福岡県", "太宰府": "福岡県",
-    "佐賀": "佐賀県", "唐津": "佐賀県", "嬉野": "佐賀県",
-    "長崎": "長崎県", "佐世保": "長崎県", "ハウステンボス": "長崎県", "五島": "長崎県",
+    "別府": "大分県", "由布院": "大分県", "湯布院": "大分県", "佐伯": "大分県", "大分": "大分県",
+    "福岡": "福岡県", "博多": "福岡県", "天神": "福岡県", "太宰府": "福岡県",
+    "長崎": "長崎県", "佐世保": "長崎県", "ハウステンボス": "長崎県",
     "熊本": "熊本県", "阿蘇": "熊本県", "黒川": "熊本県",
-    "大分": "大分県", "別府": "大分県", "由布院": "大分県", "湯布院": "大分県", "佐伯": "大分県",
-    "宮崎": "宮崎県", "高千穂": "宮崎県", "日南": "宮崎県",
-    "鹿児島": "鹿児島県", "指宿": "鹿児島県", "霧島": "鹿児島県", "屋久島": "鹿児島県", "奄美": "鹿児島県",
-    "沖縄": "沖縄県", "那覇": "沖縄県", "石垣": "沖縄県", "宮古島": "沖縄県", "恩納": "沖縄県", "名護": "沖縄県",
+    "宮崎": "宮崎県", "高千穂": "宮崎県",
+    "鹿児島": "鹿児島県", "指宿": "鹿児島県", "霧島": "鹿児島県", "屋久島": "鹿児島県",
+    "沖縄": "沖縄県", "那覇": "沖縄県", "石垣": "沖縄県", "宮古島": "沖縄県",
+    "大阪": "大阪府", "USJ": "大阪府", "ユニバ": "大阪府", "梅田": "大阪府", "難波": "大阪府", "新大阪": "大阪府",
+    "京都": "京都府", "奈良": "奈良県", "神戸": "兵庫県", "姫路": "兵庫県",
+    "東京": "東京都", "新宿": "東京都", "渋谷": "東京都", "池袋": "東京都", "上野": "東京都", "浅草": "東京都", "羽田": "東京都",
+    "横浜": "神奈川県", "鎌倉": "神奈川県", "箱根": "神奈川県", "小田原": "神奈川県",
+    "名古屋": "愛知県", "ジブリパーク": "愛知県", "犬山": "愛知県",
+    "伊勢": "三重県", "志摩": "三重県", "鳥羽": "三重県", "賢島": "三重県", "地中海村": "三重県",
+    "静岡": "静岡県", "熱海": "静岡県", "伊豆": "静岡県", "熱川": "静岡県", "下田": "静岡県", "浜松": "静岡県",
+    "山梨": "山梨県", "河口湖": "山梨県", "富士急": "山梨県",
+    "長野": "長野県", "軽井沢": "長野県", "松本": "長野県",
+    "金沢": "石川県", "札幌": "北海道", "函館": "北海道", "小樽": "北海道",
 }
 
 
@@ -660,7 +790,6 @@ def collect_trip_places(trip: dict) -> list[str]:
             places.append(str(h.get("place")))
         if h.get("hotel"):
             places.append(str(h.get("hotel")))
-    # 重複を保ったまま、空白だけ整える
     return [x.strip() for x in places if x and x.strip()]
 
 
@@ -671,25 +800,18 @@ def detect_prefecture(place: str, settings: dict | None = None) -> str | None:
 
     settings = settings or {}
     overrides = settings.get("place_prefecture_overrides", {}) or {}
-
-    # 補正辞書は完全一致優先
     if place in overrides and overrides[place] in PREFECTURES:
         return overrides[place]
 
-    # 都道府県名がそのまま入っている場合
     for pref in PREFECTURES:
         if pref in place:
             return pref
 
-    # 「京都」「大阪」「東京」のように府県を省略した入力
-    short_pref_map = {
-        "北海道": "北海道", "東京": "東京都", "京都": "京都府", "大阪": "大阪府",
-    }
+    short_pref_map = {"北海道": "北海道", "東京": "東京都", "京都": "京都府", "大阪": "大阪府"}
     for key, pref in short_pref_map.items():
         if key in place:
             return pref
 
-    # 簡易地名辞書。長いキーワードから先に見る。
     for key, pref in sorted(PLACE_TO_PREFECTURE.items(), key=lambda x: len(x[0]), reverse=True):
         if key in place:
             return pref
@@ -700,10 +822,8 @@ def detect_prefecture(place: str, settings: dict | None = None) -> str | None:
 def travel_statistics(trips: list[dict], settings: dict | None = None) -> dict:
     visited_prefectures = set()
     unknown_places = set()
-    total_hotels = 0
 
     for trip in trips:
-        total_hotels += len(trip.get("hotels", []))
         for place in collect_trip_places(trip):
             pref = detect_prefecture(place, settings)
             if pref:
@@ -711,11 +831,13 @@ def travel_statistics(trips: list[dict], settings: dict | None = None) -> dict:
             else:
                 unknown_places.add(place)
 
+    visited = sorted(visited_prefectures, key=lambda p: PREFECTURES.index(p) if p in PREFECTURES else 999)
+
     return {
         "trip_count": len(trips),
-        "visited_prefectures": sorted(visited_prefectures, key=lambda p: PREFECTURES.index(p) if p in PREFECTURES else 999),
-        "visited_prefecture_count": len(visited_prefectures),
-        "total_hotels": total_hotels,
+        "visited_prefectures": visited,
+        "visited_prefecture_count": len(visited),
+        "total_nights": total_nights(trips),
         "unknown_places": sorted(unknown_places),
     }
 
@@ -724,11 +846,10 @@ def render_travel_statistics(trips: list[dict], settings: dict):
     stats = travel_statistics(trips, settings)
 
     st.subheader("旅行統計")
-
     c1, c2, c3 = st.columns(3)
     c1.metric("旅行回数", f"{stats['trip_count']}回")
     c2.metric("行った都道府県", f"{stats['visited_prefecture_count']}都道府県")
-    c3.metric("総宿泊数", f"{stats['total_hotels']}泊")
+    c3.metric("総宿泊数", f"{stats['total_nights']}泊")
 
     if stats["visited_prefectures"]:
         st.markdown("#### 行った都道府県")
@@ -738,18 +859,17 @@ def render_travel_statistics(trips: list[dict], settings: dict):
 
     if stats["unknown_places"]:
         st.markdown("#### 都道府県を判定できなかった場所")
-        st.caption("市区町村名や施設名だけだと判定できない場合があります。下の補正で都道府県を指定してください。")
+        st.caption("未知の施設名や地名は、下の補正で都道府県を指定してください。")
         st.write("、".join(stats["unknown_places"][:30]))
 
 
 def render_prefecture_overrides(group_id: str, trips: list[dict], settings: dict):
     stats = travel_statistics(trips, settings)
     unknowns = stats["unknown_places"]
+    overrides = dict(settings.get("place_prefecture_overrides", {}) or {})
 
     st.subheader("地名→都道府県の補正")
-    st.caption("自動判定できない地名に、都道府県を手動で紐づけます。例：別府市 → 大分県")
-
-    overrides = dict(settings.get("place_prefecture_overrides", {}) or {})
+    st.caption("例：別府市 → 大分県。補正はグループ設定として保存されます。")
 
     if not unknowns and not overrides:
         st.info("補正が必要な地名はありません。")
@@ -757,21 +877,20 @@ def render_prefecture_overrides(group_id: str, trips: list[dict], settings: dict
 
     with st.form("prefecture_overrides_form"):
         all_places = sorted(set(unknowns) | set(overrides.keys()))
+        new_overrides = {}
 
         for place in all_places:
             current = overrides.get(place, "")
             options = ["未設定"] + PREFECTURES
             index = options.index(current) if current in options else 0
             selected = st.selectbox(place, options, index=index, key=f"pref_override_{place}")
-            if selected == "未設定":
-                overrides.pop(place, None)
-            else:
-                overrides[place] = selected
+            if selected != "未設定":
+                new_overrides[place] = selected
 
         submitted = st.form_submit_button("補正を保存")
 
     if submitted:
-        settings["place_prefecture_overrides"] = overrides
+        settings["place_prefecture_overrides"] = new_overrides
         save_current(group_id, trips, settings)
         st.success("補正を保存しました。")
         st.rerun()
@@ -785,6 +904,8 @@ def render_selected_trip(group_id: str, trips: list[dict], settings: dict):
         return
     trip = normalize_trip(trips[idx])
 
+    render_trip_booklet_header(trip, settings, trips)
+
     col_title, col_pdf, col_delete = st.columns([5,1,1])
     with col_title:
         new_title = st.text_input("旅行タイトル", value=trip.get("title", ""), key=f"title_{trip['id']}")
@@ -792,7 +913,7 @@ def render_selected_trip(group_id: str, trips: list[dict], settings: dict):
             trip["title"] = new_title
             save_current(group_id, trips, settings)
     with col_pdf:
-        pdf = make_pdf(trip, settings.get("app_title", "TripList"))
+        pdf = make_pdf(trip, settings, trips)
         st.download_button("PDF", data=pdf, file_name=f"{safe_filename(trip.get('title'))}.pdf", mime="application/pdf")
     with col_delete:
         if st.button("旅行削除", type="secondary"):
@@ -873,7 +994,7 @@ def main():
         stats = travel_statistics(trips, settings)
         st.metric("旅行回数", f"{stats['trip_count']}回")
         st.metric("行った都道府県", f"{stats['visited_prefecture_count']}都道府県")
-        st.metric("総宿泊数", f"{stats['total_hotels']}泊")
+        st.metric("総宿泊数", f"{stats['total_nights']}泊")
 
     render_trip_sidebar(group_id, trips, settings)
     render_selected_trip(group_id, trips, settings)
